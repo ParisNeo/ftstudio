@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ftstudio</title>
+<style>
+:root{--paper:#eef1f4;--panel:#fbfcfd;--ink:#16212c;--mut:#667585;--line:#d5dce3;--steel:#25607f;--amber:#c97a00;--moss:#3b7d4f;--brick:#b4443a;
+--sans:"Avenir Next","Segoe UI Variable","Segoe UI",system-ui,sans-serif;--mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--paper);color:var(--ink);font:14px/1.45 var(--sans);display:grid;grid-template-rows:auto 1fr}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--steel);outline-offset:2px}
+header{display:flex;align-items:center;gap:20px;padding:10px 20px;background:var(--ink);color:#e8edf2}
+header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px}
+#lane{flex:1;display:flex;align-items:center;gap:12px;min-width:0}
+#lane .txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+#bar{flex:1;height:6px;border-radius:3px;background:#2c3b49;overflow:hidden;min-width:60px}
+#bar i{display:block;height:100%;width:30%;background:var(--amber);border-radius:3px;animation:sweep 1.6s ease-in-out infinite alternate}
+#bar.idle i{animation:none;width:0}
+@keyframes sweep{from{margin-left:0}to{margin-left:70%}}
+@media (prefers-reduced-motion:reduce){#bar i{animation:none;margin-left:35%}}
+.btn{border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:6px;cursor:pointer}
+.btn:hover{border-color:var(--steel)}.btn.pri{background:var(--steel);border-color:var(--steel);color:#fff}
+.btn.bad{color:var(--brick)}
+.helpbtn{background:none;border:0;color:#c8d6e2;cursor:pointer;padding:0;font:inherit;font-size:13px}
+.helpbtn:hover{color:#fff}
+main{display:grid;grid-template-columns:320px 1fr;min-height:0}
+#list{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
+.job{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:10px 16px;border-bottom:1px solid var(--line);cursor:pointer;width:100%;text-align:left;background:none;border-left:0;border-right:0;border-top:0}
+.job:hover{background:#f2f5f8}.job[aria-current=true]{background:#e4edf3;box-shadow:inset 3px 0 var(--steel)}
+.job b{font-weight:600}.job small{color:var(--mut);grid-column:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dot{width:10px;height:10px;border-radius:50%;margin-top:5px;background:var(--mut)}
+.s-running .dot{background:var(--amber)}.s-succeeded .dot{background:var(--moss)}.s-failed .dot{background:var(--brick)}.s-cancelled .dot,.s-cancelling .dot{background:#9aa5b1}
+#detail{display:grid;grid-template-rows:auto auto 1fr;min-width:0;min-height:0}
+#dhead{padding:16px 24px 8px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
+#dhead h2{margin:0;font-size:20px}#dhead .meta{color:var(--mut);flex:1}
+.pill{padding:2px 9px;border-radius:99px;font-size:12px;color:#fff;background:var(--mut)}
+.pill.running{background:var(--amber)}.pill.succeeded{background:var(--moss)}.pill.failed{background:var(--brick)}
+#tabs{display:flex;gap:4px;padding:0 24px;border-bottom:1px solid var(--line)}
+#tabs button{border:0;background:none;padding:8px 14px;cursor:pointer;color:var(--mut);border-bottom:2px solid transparent}
+#tabs button[aria-selected=true]{color:var(--ink);border-color:var(--steel);font-weight:600}
+.pane{overflow:auto;padding:18px 24px;min-height:0}
+pre{margin:0;font:12.5px/1.5 var(--mono);white-space:pre-wrap;word-break:break-word}
+#log:empty::before{content:"Starting. Loading Python libraries can take 20 to 30 seconds before the first line appears.";color:#8fa0b0}
+#log{background:var(--ink);color:#d9e2ea;padding:14px 16px;border-radius:8px;height:100%;overflow:auto}
+.cards{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;min-width:130px}
+.card b{display:block;font-size:26px;font-variant-numeric:tabular-nums}.card span{color:var(--mut)}.card i{display:block;font-style:normal;font-size:12px;color:var(--mut)}
+table{border-collapse:collapse;margin-bottom:18px}td,th{padding:4px 18px 4px 0;text-align:left;vertical-align:top}th{color:var(--mut);font-weight:500}
+h3{font-size:15px;margin:18px 0 8px}
+.empty{color:var(--mut);padding:40px 24px;max-width:46ch}
+dialog{border:1px solid var(--line);border-radius:10px;padding:0;width:min(560px,94vw);background:var(--panel);color:var(--ink)}
+dialog::backdrop{background:rgba(22,33,44,.45)}
+dialog form{padding:20px 24px;display:grid;gap:12px}
+dialog label{display:grid;gap:4px;color:var(--mut);font-size:13px}
+dialog input,dialog select,dialog textarea{border:1px solid var(--line);border-radius:6px;padding:7px 9px;background:#fff;color:var(--ink)}
+dialog textarea{font:12.5px/1.4 var(--mono);min-height:54px}
+.row{display:flex;gap:8px;justify-content:flex-end;align-items:center}.err{color:var(--brick);flex:1;font-size:13px}
+@media(max-width:760px){main{grid-template-columns:1fr}#list{max-height:34vh;border-right:0;border-bottom:1px solid var(--line)}}
+.brand{background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0}
+dialog small{color:var(--mut);font-size:12px}dialog details{color:var(--mut);font-size:13px}dialog summary{cursor:pointer;margin-bottom:6px}dialog form{max-height:86vh;overflow:auto}
+.guide{padding:28px 32px;max-width:700px}.guide h2{margin:0 0 6px}.guide ol{list-style:none;padding:0;margin:20px 0;display:grid;gap:10px}
+.guide li{display:flex;justify-content:space-between;gap:16px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.guide li.next{border-color:var(--steel);box-shadow:inset 3px 0 var(--steel)}.guide li.done b::before{content:"Done: ";color:var(--moss)}
+.guide li span{color:var(--mut);margin-left:10px;font-size:12px}.guide p{margin:4px 0 0;color:var(--mut)}.btn:disabled{opacity:.45;cursor:default}
+
+/* Field help tooltip (pure CSS, no JS) */
+.lrow{display:flex;align-items:center;gap:0}
+.fh{display:inline-flex;width:17px;height:17px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--mut);cursor:help;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;margin-left:6px;position:relative;user-select:none}
+.fh:hover{background:var(--steel);color:#fff;border-color:var(--steel)}
+.fh::after{content:attr(data-tip);position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%);width:260px;background:var(--ink);color:#e8edf2;padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.55;font-weight:400;text-align:left;white-space:normal;box-shadow:0 4px 18px rgba(0,0,0,.28);pointer-events:none;opacity:0;visibility:hidden;transition:opacity .15s;z-index:300}
+.fh:hover::after{opacity:1;visibility:visible}
+
+/* Help panel */
+.helpsc{padding:32px 40px;max-width:780px;line-height:1.65;font-size:14px;overflow:auto;height:100%}
+.helpsc h2{font-size:22px;margin:0 0 4px}
+.helpsc h3{font-size:16px;margin:28px 0 6px;color:var(--steel)}
+.helpsc h4{font-size:14px;margin:16px 0 4px}
+.helpsc p{margin:4px 0 10px}
+.helpsc code{background:#e4e9ee;padding:2px 6px;border-radius:4px;font:12.5px/1.4 var(--mono)}
+.helpsc ul,.helpsc ol{padding-left:22px}
+.helpsc li{margin-bottom:4px}
+.helpsc table td,.helpsc table th{padding:6px 14px 6px 0}
+.gform-help{background:#f0f5f9;border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin-bottom:4px;font-size:13px;line-height:1.6}
+.gform-help h4{margin:0 0 5px;font-size:14px;color:var(--steel)}
+.gform-help p{margin:0}
+</style></head><body>
+<header><h1><button id="home" class="brand" title="Back to the start page">ftstudio</button></h1>
+<div id="lane"><div class="txt" id="lanetxt">GPU idle</div><div id="bar" class="idle"><i></i></div><div class="txt" id="queued"></div></div>
+<button class="helpbtn" id="helpbtn">? Help</button>
+<button class="btn pri" id="new">New job</button></header>
+<main>
+<nav id="list" aria-label="Jobs"></nav>
+<section id="detail"></section></main>
+<datalist id="bases"><option value="unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit">Llama 3.1 8B Instruct</option><option value="unsloth/Qwen2.5-7B-Instruct-bnb-4bit">Qwen 2.5 7B Instruct</option><option value="unsloth/mistral-7b-instruct-v0.3-bnb-4bit">Mistral 7B Instruct v0.3</option></datalist>
+<dialog id="dlg"><form method="dialog" id="frm"></form></dialog>
+<script>
+var $=s=>document.querySelector(s),esc=s=>String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]});
+var api=function(p,o){return fetch(p,o).then(function(r){return r.json().catch(function(){return{}}).then(function(j){if(!r.ok)throw new Error(typeof j.detail==="string"?j.detail:JSON.stringify(j.detail||r.status));return j})})};
+var base=function(p){return String(p||"").split(/[\\/]/).pop()};
+var label=function(j){return j.kind==="eval"?base(j.params.gguf):j.kind==="train"?base(j.params.base_model):j.kind==="export"?"export "+(j.params.train_job||base(j.params.adapter_dir)):j.kind==="prep"?prepLabel(j.params):j.kind==="synth"?"entries for "+(j.params.library||"?"):j.kind==="fetch"?"download "+base(j.params.file||j.params.repo):j.kind};
+var ago=function(t){var s=Math.max(0,Date.now()/1000-t);return s<60?Math.round(s)+"s":s<3600?Math.round(s/60)+"m":s<86400?Math.round(s/3600)+"h":Math.round(s/86400)+"d"};
+var jobs=[],sel=null,ws=null,tab="log",shown="",showingHelp=false;
+
+var KINDS=[["prep","Prepare my data"],["eval","Test a model"],["train","Train a model"],["export","Export to GGUF"]];
+var SCHEMA={
+ prep:[["inputs","Your data files","lines","/data/train.jsonl","Full path to each .jsonl, .json or .csv file, one per line. Each example needs a question and an answer; common layouts are detected for you.",1],["tokenizer","Model tokenizer","text","meta-llama/Llama-3.1-8B-Instruct","Use the model you will train, so the chat format matches. Needed for length limits and the format check."],["max_seq_len","Longest example allowed (tokens)","num","2048","Longer examples are removed, never cut. Roughly 4 characters per token."],["val_fraction","Share kept aside for checking","num","0.05","Examples the model never trains on. They show whether it is really learning. 0.05 means 5%."],["decontaminate_against","Your test files","lines","/data/my_tasks.jsonl","Anything that appears in these files is removed from training, so your test scores stay honest."],["columns.user","CSV only: question column","text",""],["columns.assistant","CSV only: answer column","text",""],["system_prompt","Default system prompt","text","","Added to examples that have none."]],
+ eval:[["gguf","Model file (.gguf)","text","/models/base-Q4_K_M.gguf","The model to score. Test the original first, so you have numbers to beat.",1],["suites.perplexity.file","Text file for perplexity","text","/data/wiki.test.raw","Lower perplexity means the model predicts this text better. Compare before and after training."],["suites.custom.file","Your own test (JSONL)","text","/data/my_tasks.jsonl","One line per question with the expected answer. The best way to know if training helped you."],["suites.lm_eval.tasks","Public benchmarks","lines","gsm8k","Names like gsm8k (math). Slow, so also set an example limit."],["suites.lm_eval.limit","Public benchmark example limit","num","100"],["suites.lm_eval.tokenizer","Public benchmark tokenizer","text","","Needed when you run public benchmarks."]],
+ train:[["dataset.job","Prepared data","ref:prep","","Pick a finished data-preparation job.",1],["base_model","Base model","text","unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit","The model to improve. Use the Instruct version, and the same family you prepared data with.",1],["max_seq_len","Longest example (tokens)","num","2048","Lower this first if you run out of memory."],["epochs","Passes over the data","num","1","1 is a good start. More passes can make the model memorize instead of learn."],["lora_r","Adapter size","num","16","Bigger learns more but uses more memory. 8 to 32 is typical."],["learning_rate","Learning speed","num","0.0002","Keep the default unless the loss curve jumps around."]],
+ export:[["train_job","Finished training","ref:train","","Pick a finished training job.",1],["quantizations","Sizes to make","lines","q4_k_m","q4_k_m is small and good for most uses. q8_0 is bigger and closer to the original."],["auto_eval.custom.file","Then test: your own test (JSONL)","text","","If set, each exported file is tested automatically afterwards."],["auto_eval.perplexity.file","Then test: perplexity text file","text",""]]};
+var setPath=function(o,k,v){var p=k.split("."),c=o;p.slice(0,-1).forEach(function(x){c=c[x]?c[x]:(c[x]={})});c[p[p.length-1]]=v};
+
+var HELP={
+ prep:{title:"Prepare Data",body:"Reads your raw data files, finds question-answer pairs, cleans them up, and splits into train and validation sets. Auto-detects Alpaca, ShareGPT, messages, prompt/completion and CSV formats. Writes train.jsonl and val.jsonl."},
+ eval:{title:"Test a Model (Evaluate)",body:"Starts a GGUF model with llama.cpp and runs three tests: perplexity (lower = better at predicting text), your own JSONL benchmark (prompt vs expected answer), and optional public benchmarks like GSM8K. Test the base model first."},
+ train:{title:"Train a Model",body:"Fine-tunes a base model using your prepared data, creating a small LoRA adapter (a few MB). Uses Unsloth on NVIDIA, PEFT on other GPUs/CPU, or MLX on Apple Silicon. Watch the loss curve in the Results tab."},
+ export:{title:"Export to GGUF",body:"Merges a trained adapter with the base model into a single GGUF file (runnable with llama.cpp, Ollama, etc.). Choose quantization levels and optionally auto-evaluate each exported file."},
+ fetch:{title:"Download a GGUF Model",body:"Downloads a GGUF file from a Hugging Face repository into your models folder, making it available in model pickers."},
+ synth:{title:"Generate Training Entries",body:"Reads raw documentation (Markdown, reStructuredText, text, Python), asks an LLM to write Q&A examples per passage, and saves them to a named library. Supports code execution verification and LLM judging."}
+};
+
+var FIELD_HELP={
+ "inputs":"Data files. Full paths to your training data, one per line. Supported: .jsonl (one JSON per line), .json (array), .csv. Auto-detects Alpaca, ShareGPT, messages, prompt/completion formats.",
+ "tokenizer":"Model tokenizer. The name of the tokenizer of the model you plan to train (e.g. meta-llama/Llama-3.1-8B-Instruct). Used for length limits and chat template verification.",
+ "max_seq_len":"Max sequence length (tokens). Any example longer than this is removed. Roughly 4 characters per token. 2048 is a good default. Lower = less GPU memory.",
+ "val_fraction":"Validation fraction. What share of data is kept aside (not trained on) to check that the model is really learning. 0.05 = 5%.",
+ "decontaminate_against":"Decontamination files. Paths to test files. Matching examples are removed from training so your evaluation scores stay honest.",
+ "columns.user":"CSV question column. For CSV files only: the header name of the column containing the question or prompt.",
+ "columns.assistant":"CSV answer column. For CSV files only: the header name of the column containing the answer or completion.",
+ "system_prompt":"Default system prompt. Added to examples that have none. Sets the personality or domain of the chat. Leave empty if your data already handles this.",
+ "hf_datasets":"Hugging Face datasets. Load training data from HF. Format: owner/name, optionally :config@split#limit. The #limit part downloads only that many rows.",
+ "libraries":"Generated libraries. Previous Generate training entries (synth) jobs saved entries here by name. Prepare data reads these and merges them into the training set.",
+ "gguf":"Model file (.gguf). The path to the GGUF model to test. Pick one from the On this computer buttons below, or paste a full path.",
+ "suites.perplexity.file":"Perplexity text file. Lower perplexity = better domain knowledge. Use text from your domain to measure training effect.",
+ "suites.custom.file":"Your own test file (JSONL). Each line: {\"prompt\":\"...\",\"expected\":\"...\",\"match\":\"exact|contains|regex|numeric|python\",\"tag\":\"label\"}.",
+ "suites.lm_eval.tasks":"Public benchmarks. Names from lm-eval-harness: gsm8k, hellaswag, etc. Slow; set a limit.",
+ "suites.lm_eval.limit":"Benchmark limit. Max examples per public benchmark to run.",
+ "suites.lm_eval.tokenizer":"Benchmark tokenizer. Usually the same as the model tokenizer.",
+ "dataset.job":"Prepared data. Pick a finished Prepare my data job. Its train/validation split is used automatically.",
+ "base_model":"Base model. The original model to teach. Use the Instruct (not base) version. Check the GPU memory requirement shown below.",
+ "epochs":"Epochs. How many times the model sees all of your data. 1-2 is usually enough. More risks memorization.",
+ "lora_r":"Adapter size (LoRA rank). Bigger = more learning capacity but more GPU memory. 8=minimal, 16=balanced, 32=thorough.",
+ "learning_rate":"Learning rate. How fast weights adjust. 2e-4 default is good. Lower if training loss jumps erratically.",
+ "max_steps":"Max training steps. Stop after this many steps. Leave empty to train for all data. Use 10 for a smoke test.",
+ "train_job":"Finished training. Pick a completed Train a model job. Its adapter is merged into the GGUF.",
+ "quantizations":"Sizes to make. q4_k_m = small, good everyday quality. q8_0 = larger, near-original quality. f16/bf16 = near-original precision, large file.",
+ "auto_eval.custom.file":"Auto-test benchmark. Path to your custom JSONL benchmark. Each exported GGUF is tested after export.",
+ "auto_eval.perplexity.file":"Auto-test perplexity. Path to a plain text file for perplexity evaluation after export.",
+ "server_url":"Running server. If you already have an OpenAI-compatible server (llama-server, vLLM, etc.), put its URL here.",
+ "sources":"Raw documents or folders. Paths to documentation files (Markdown, RST, text, Python), one per line. Folders are searched recursively.",
+ "library":"Library name. The collection name to save generated entries under. Prepare data reads these by name. Alphanumeric, underscores, hyphens, dots only.",
+ "mode":"Add or create. append adds entries. create starts fresh but refuses if entries already exist (use overwrite:true in extra parameters to force).",
+ "prompt":"Generation prompt. Your own prompt for the generating model. Must contain {chunk} for the passage text. {n} = entries per chunk, {source} = file path.",
+ "must_import":"Code must import. Entries whose generated code does not contain this import are rejected. Ensures examples use your library.",
+ "per_chunk":"Entries per passage. How many QA examples to generate from each document passage.",
+ "max_chunks":"Max passages. Process only this many passages. Use 3 for a dry-run test of your setup.",
+ "backend":"Training engine. auto picks for your hardware: unsloth (NVIDIA, fastest), peft (any GPU/CPU), mlx (Apple Silicon)."
+};
+
+function refSel(k,kind){var o=jobs.filter(function(j){return j.kind===kind&&j.status==="succeeded"});
+ return '<select data-k="'+k+'" data-t="ref">'+(o.length?o.map(function(j){return '<option value="'+j.id+'">'+esc(label(j))+' ('+j.id+')</option>'}).join(""):'<option value="" disabled selected>No finished '+kind+' job yet. Do that step first.</option>')+'</select>'}
+function field(arr){var k=arr[0],l=arr[1],t=arr[2],ph=arr[3],h=arr[4],rq=arr[5];
+ var fh=FIELD_HELP[k]?'<span class="fh" data-tip="'+esc(FIELD_HELP[k])+'">?</span>':"";
+ var a='data-k="'+k+'" data-t="'+t.split(":")[0]+'" placeholder="'+esc(ph||"")+'"';
+ var c=t.indexOf("ref:")===0?refSel(k,t.slice(4)):(t==="lines"?'<textarea '+a+'></textarea>':'<input '+a+(k==="base_model"||k==="tokenizer"?' list="bases"':"")+'>');
+ return '<label><span class="lrow">'+esc(l)+fh+(rq?" (required)":"")+'</span>'+c+(h?'<small>'+esc(h)+'</small>':"")+'</label>'}
+var flat=function(o,pre){pre=pre||"";var out=[];Object.keys(o).forEach(function(k){var v=o[k];if(v&&typeof v==="object"&&!Array.isArray(v)){out=out.concat(flat(v,pre+k+"."))}else{out.push([pre+k,v])}});return out};
+var presets=[];api("/presets").then(function(p){presets=p}).catch(function(){});
+function applyPreset(f,id){var pr=presets.find(function(x){return x.id===id});$e('#pdesc').textContent=pr?pr.desc:"Pick one to fill in sensible values. You can still edit everything.";if(!pr)return;
+ var extra={};flat(pr.params).forEach(function(pair){var k=pair[0],v=pair[1];var el=f.querySelector('[data-k="'+k+'"]');if(el){el.value=Array.isArray(v)?v.join("\n"):v}else{setPath(extra,k,v)}});
+ var e2=f.querySelector("#extra");if(e2)e2.value=Object.keys(extra).length?JSON.stringify(extra):""}
+var $e=function(s){return $(s)};
+function openForm(kind){kind=kind||"prep";var f=$("#frm"),ps=presets.filter(function(p){return p.kind===kind});
+ var ghelp=HELP[kind];
+ f.innerHTML=(ghelp?'<div class="gform-help"><h4>'+esc(ghelp.title)+'</h4><p>'+esc(ghelp.body)+'</p></div>':"")
+ +'<label>What do you want to do?<select id="kind">'+KINDS.map(function(pair){return '<option value="'+pair[0]+'"'+(pair[0]===kind?" selected":"")+'>'+pair[1]+'</option>'}).join("")+'</select></label>'
+ +(ps.length?'<label>Preset<select id="preset"><option value="">Custom</option>'+ps.map(function(p){return '<option value="'+p.id+'">'+esc(p.name)+'</option>'}).join("")+'</select><small id="pdesc">Pick one to fill in sensible values. You can still edit everything.</small></label>':"")
+ +SCHEMA[kind].map(field).join("")
+ +'<details><summary>Advanced: extra parameters (JSON)</summary><textarea id="extra" placeholder=\'{"port": 8090}\'></textarea></details><div class="row"><span class="err" id="ferr"></span><button type="button" class="btn" id="cancelf">Close</button><button class="btn pri" type="submit">Queue job</button></div>';
+ f.querySelector("#kind").onchange=function(e){openForm(e.target.value)};
+ f.querySelector("#cancelf").onclick=function(){$("#dlg").close()};
+ var psEl=f.querySelector("#preset");if(psEl)psEl.onchange=function(e){applyPreset(f,e.target.value)};
+ f.onsubmit=function(e){e.preventDefault();var params={},k=f.querySelector("#kind").value;
+  var miss=SCHEMA[k].filter(function(x){return x[5]}).find(function(x){var el=f.querySelector('[data-k="'+x[0]+'"]');return !el||!el.value.trim()});
+  if(miss){f.querySelector("#ferr").textContent="Fill in: "+miss[1];return}
+  f.querySelectorAll("[data-k]").forEach(function(el){var v=el.value.trim();if(!v)return;
+   if(el.getAttribute("data-t")==="lines")v=v.split("\n").map(function(s){return s.trim()}).filter(Boolean);else if(el.getAttribute("data-t")==="num")v=Number(v);setPath(params,el.getAttribute("data-k"),v)});
+  try{var x=f.querySelector("#extra");var xv=x?x.value.trim():"";if(xv)Object.assign(params,JSON.parse(xv));
+   api("/jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind:k,params})}).then(function(r){$("#dlg").close();load().then(function(){pick(r.id)})}).catch(function(er){f.querySelector("#ferr").textContent=er.message})}catch(er){f.querySelector("#ferr").textContent=er instanceof SyntaxError?"The extra parameters are not valid JSON.":er.message}};
+ if(!$("#dlg").open)$("#dlg").showModal();
+}
+$("#new").onclick=function(){openForm()};
+
+function card(l,v,s){return '<div class="card"><b>'+esc(v)+'</b><span>'+esc(l)+'</span>'+(s?'<i>'+esc(s)+'</i>':"")+'</div>'}
+function table(rows,h){return '<table>'+(h?'<tr>'+h.map(function(x){return '<th>'+esc(x)+'</th>'}).join("")+'</tr>':"")+rows.map(function(r){return '<tr>'+r.map(function(c){return '<td>'+esc(c)+'</td>'}).join("")+'</tr>'}).join("")+'</table>'}
+function resPrep(r){
+ var d=Object.entries(r.dropped||{}),ls=r.length_stats,pr=r.template_probe;
+ return '<div class="cards">'+card("examples read",r.read)+card("kept",r.kept)+card("train",r.train)+card("validation",r.val)+(ls?card("p95 length",ls.p95,r.length_unit+", max "+ls.max):"")+'</div>'
+ +(d.length?'<h3>Dropped</h3>'+table(d.map(function(pair){var k=pair[0],n=pair[1];return [k,n,(r.drop_examples[k]||[]).map(function(e){return e.file+":"+e.line+" "+e.detail}).join(" | ")]}),["reason","count","examples"]):'<p>Nothing dropped.</p>')
+ +(pr?'<h3>Chat template probe</h3>'+(pr.error?'<p>'+esc(pr.error)+'</p>':'<pre>'+esc(JSON.stringify({before_user:pr.prefix,between_user_and_assistant:pr.between,after_assistant:pr.suffix},null,1))+'</pre>'):'<p>No tokenizer given: lengths are characters and the chat template was not checked.</p>')
+ +'<h3>Dataset</h3><p><pre>'+esc(r.paths.train)+'\n'+esc(r.paths.val)+'\nsha256 '+esc(r.sha256)+'</pre></p><p><a href="/jobs/'+sel+'/artifacts/preview.txt" target="_blank">Open rendered samples</a></p>'}
+function resEval(r){
+ var c="",t="";var p=r.perplexity,u=r.custom;
+ if(p)c+=card("perplexity",p.ppl.toFixed(3),"\u00b1 "+p.stderr+", ctx "+p.ctx);
+ if(u)c+=card("your benchmark",(u.accuracy*100).toFixed(1)+"%",u.n+" items");
+ if(u&&Object.keys(u.by_tag).length>1)t+='<h3>Your benchmark by tag</h3>'+table(Object.entries(u.by_tag).map(function(pair){var k=pair[0],v=pair[1];return [k,(v*100).toFixed(1)+"%"]}));
+ if(r.lm_eval)t+='<h3>lm-eval</h3>'+table(Object.entries(r.lm_eval).flatMap(function(pair){var task=pair[0],m=pair[1];return Object.entries(m).filter(function(p2){return typeof p2[1]==="number"}).map(function(p2){return [task,p2[0],+p2[1].toFixed(4)]})}),["task","metric","value"]);
+ return '<div class="cards">'+c+'</div>'+t}
+function chart(c,e){if(!c||c.length<2)return "";var all=c.concat(e||[]),xs=all.map(function(p){return p[0]}),ys=all.map(function(p){return p[1]}),x0=Math.min.apply(Math,xs),x1=Math.max.apply(Math,xs),y0=Math.min.apply(Math,ys),y1=Math.max.apply(Math,ys);
+ var pt=function(p){return (8+(p[0]-x0)/(x1-x0||1)*584).toFixed(1)+","+(142-(p[1]-y0)/(y1-y0||1)*128).toFixed(1)};
+ return '<h3>Loss</h3><svg viewBox="0 0 600 156" width="100%" style="max-width:640px;background:var(--panel);border:1px solid var(--line);border-radius:8px" role="img" aria-label="Training loss curve"><polyline fill="none" stroke="#25607f" stroke-width="2" points="'+c.map(pt).join(" ")+'"/>'+(e&&e.length>1?'<polyline fill="none" stroke="#c97a00" stroke-width="2" stroke-dasharray="5 4" points="'+e.map(pt).join(" ")+'/>':"")+'<text x="12" y="150" font-size="11" fill="#667585">steps '+x0+' to '+x1+', loss '+y1.toFixed(2)+' down to '+y0.toFixed(2)+(e&&e.length>1?", dashed is validation":"")+'</text></svg>'}
+function resTrain(r){return '<div class="cards">'+card("final train loss",(r.final_loss!=null?r.final_loss.toFixed(3):"n/a"),r.steps+" steps")+(r.eval_loss!=null?card("validation loss",r.eval_loss.toFixed(3)):"")+card("minutes",r.minutes)+card("peak VRAM",r.peak_vram_gb+" GB")+'</div>'+chart(r.loss_curve,r.eval_curve)+'<h3>Adapter</h3><pre>'+esc(r.adapter)+'\nbase '+esc(r.base_model)+'</pre><p>Check the log: the line starting TRAINED ON must contain only assistant text.</p>'}
+function resExport(r){return '<h3>GGUF files</h3>'+table(r.ggufs.map(function(g){return [g.quant,g.size_mb+" MB",g.path]}),["quant","size","path"])+(r.eval_jobs.length?'<p>Queued evaluation: '+r.eval_jobs.map(esc).join(", ")+'</p>':"<p>No evaluation queued.</p>")}
+function renderRes(j){
+ if(j.status==="failed")return '<p><b>Failed:</b> '+esc(j.error)+'</p><p>The log tab shows what the process printed before it stopped.</p>';
+ if(!j.result)return '<p>'+(j.status==="running"||j.status==="queued"?"Results appear here when the job finishes.":"No result recorded.")+'</p>';
+ try{if(j.kind==="prep")return resPrep(j.result);if(j.kind==="eval")return resEval(j.result);if(j.kind==="train")return resTrain(j.result);if(j.kind==="export")return resExport(j.result)}catch(e){}
+ return '<pre>'+esc(JSON.stringify(j.result,null,2))+'</pre>'}
+
+var HINTS=[[/out of memory/i,"The GPU ran out of memory. Use the Low memory preset, or lower the longest example length and the adapter size."],
+[/no chat_template/i,"This tokenizer has no chat format. Use the Instruct or Chat version of the model."],
+[/gated repo|401 Client Error|is restricted/i,"Hugging Face wants you logged in for this model. Run huggingface-cli login (or set HF_TOKEN) and accept the license on the model page."],
+[/No module named '?(unsloth|trl|datasets)/i,"A training package is missing. Install it with: pip install -e \".[train]\""],
+[/No module named '?lm_eval/i,"lm-eval is missing. Install it with: pip install -e \".[eval]\""],
+[/No such file or directory: '?llama-/i,"The llama.cpp programs were not found. Set FTS_LLAMA_SERVER and FTS_LLAMA_PERPLEXITY to their full paths."],
+[/No such file|FileNotFoundError/i,"A file path is wrong. Check the Parameters tab: every path must exist on the machine running ftstudio."]];
+function skeleton(){
+ $("#detail").innerHTML='<div id="dhead"></div><div id="tabs" role="tablist">'+[["log","Log"],["res","Results"],["par","Parameters"]].map(function(pair){var k=pair[0],l=pair[1];return '<button role="tab" data-t="'+k+'" aria-selected="'+(k===tab)+'">'+l+'</button>'}).join("")+'</div>'
+ +'<div class="pane" id="p-log"><pre id="log"></pre></div><div class="pane" id="p-res" hidden></div><div class="pane" id="p-par" hidden></div>';
+ document.querySelectorAll("#tabs button").forEach(function(b){b.onclick=function(){tab=b.getAttribute("data-t");showTab()}});showTab()}
+function showTab(){document.querySelectorAll("#tabs button").forEach(function(b){b.setAttribute("aria-selected",String(b.getAttribute("data-t")===tab))});["log","res","par"].forEach(function(k){var el=document.getElementById("p-"+k);if(el)el.hidden=k!==tab})}
+function paint(j){
+ var key=j.status+j.finished;if(key===shown)return;shown=key;
+ $("#dhead").innerHTML='<h2>'+esc(label(j))+'</h2><span class="pill '+j.status+'">'+j.status+'</span><span class="meta">'+esc(j.kind)+' job '+j.id+', queued '+ago(j.created)+' ago'+(j.finished&&j.started?', ran '+Math.round(j.finished-j.started)+'s':"")+'</span>'+(j.status==="queued"||j.status==="running"?'<button class="btn bad" id="stop">Cancel job</button>':"");
+ var s=$("#stop");if(s)s.onclick=function(){api("/jobs/"+j.id+"/cancel",{method:"POST"}).then(load)};
+ $("#p-res").innerHTML=renderRes(j);if(j.status==="failed")api("/jobs/"+j.id+"/log").then(function(r){var h=HINTS.filter(function(pair){return pair[0].test(r.text)}).map(function(pair){return pair[1]});if(h.length)$("#p-res").insertAdjacentHTML("afterbegin",'<h3>What to try</h3><ul>'+h.map(function(x){return '<li>'+esc(x)+'</li>'}).join("")+'</ul>')}).catch(function(){});
+ $("#p-par").innerHTML='<pre>'+esc(JSON.stringify(j.params,null,2))+'</pre>'}
+function stream(id){
+ if(ws)ws.close();var log=$("#log"),n=0;
+ ws=new WebSocket((location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/jobs/"+id+"/stream");
+ ws.onmessage=function(e){var near=log.scrollHeight-log.scrollTop-log.clientHeight<60;log.textContent+=e.data;n+=e.data.length;
+  if(n>300000){log.textContent=log.textContent.slice(-200000);n=200000}if(near)log.scrollTop=log.scrollHeight};
+ ws.onclose=function(){if(sel===id&&!log.textContent)log.textContent="No output yet."}}
+function pick(id){sel=id;shown="";skeleton();api("/jobs/"+id).then(function(j){paint(j)});stream(id);render()}
+
+function render(){
+ $("#list").innerHTML=jobs.length?jobs.map(function(j){return '<button class="job s-'+j.status+'" data-id="'+j.id+'"'+(j.id===sel?' aria-current="true"':"")+'><i class="dot"></i><b>'+esc(label(j))+'</b><small>'+esc(j.kind)+', '+j.status+', '+ago(j.created)+' ago</small></button>'}).join(""):'<div class="empty">Nothing here yet. Queue a data-prep job to start.</div>';
+ document.querySelectorAll(".job").forEach(function(b){b.onclick=function(){pick(b.getAttribute("data-id"))}})}
+var gkey=null;
+function guide(){var n=function(k){return jobs.filter(function(j){return j.kind===k&&j.status==="succeeded"}).length};
+ var S=[["prep","Prepare your data","Turn your files into a clean training set plus a check set the model never sees.","Prepare data",1],["eval","Measure the starting model","Score the original model first. Training only helped if it beats this.","Test a model",1],["train","Train","Teach the model from your data. Start with the Smoke test preset to prove everything works.","Train a model",n("prep")],["export","Export and test the result","Make a GGUF file for llama.cpp, then score it the same way as step 2.","Export to GGUF",n("train")]];
+ var first=S.findIndex(function(s){return !n(s[0])});
+ $("#detail").innerHTML='<div class="guide"><h2>Start here</h2><p>Four steps from your data to a model you can run. Each step is a job, and jobs take turns on the GPU.</p><ol>'+S.map(function(s,i){return '<li class="'+(n(s[0])?"done":i===first?"next":"")+'"><div><b>'+s[1]+'</b><span>'+(n(s[0])?n(s[0])+" finished":s[4]?"":"Do the step before first")+'</span><p>'+s[2]+'</p></div><button class="btn '+(i===first?"pri":"")+'" data-go="'+s[0]+'" '+(s[4]?"":"disabled")+'>'+s[3]+'</button></li>'}).join("")+'</ol></div>';
+ document.querySelectorAll("[data-go]").forEach(function(b){b.onclick=function(){openForm(b.getAttribute("data-go"))}})}
+
+function helpPage(){
+ showingHelp=true;sel=null;if(ws){ws.close();ws=null}
+ var d=$("#detail");
+ d.innerHTML='<div class="helpsc">'
+ +'<h2>FTStudio Help &amp; Documentation</h2>'
+ +'<p>Everything you need to know about preparing data, evaluating models, training, and exporting.</p>'
+ +'<h3>The pipeline</h3>'
+ +'<p>FTStudio guides you through a four-step pipeline. Each step is a <b>job</b> that runs one at a time (jobs take turns on the GPU).</p>'
+ +'<table><tr><th>Step</th><th>Job kind</th><th>What it does</th></tr>'
+ +'<tr><td><b>1. Prepare</b></td><td><code>prep</code></td><td>Reads raw data files, normalizes to chat format, removes duplicates and decontaminates, and splits into train + validation sets.</td></tr>'
+ +'<tr><td><b>2. Evaluate</b></td><td><code>eval</code></td><td>Starts a GGUF model and scores it: perplexity, your own test file, and optional public benchmarks like GSM8K.</td></tr>'
+ +'<tr><td><b>3. Train</b></td><td><code>train</code></td><td>Fine-tunes a base model on your prepared data. Creates a small LoRA adapter (a few MB), never changes the original model.</td></tr>'
+ +'<tr><td><b>4. Export</b></td><td><code>export</code></td><td>Merges the adapter into a single GGUF file you can run anywhere. Optionally queues eval jobs automatically.</td></tr></table>'
+ +'<h3>Supported data formats</h3>'
+ +'<p>When preparing data, FTStudio auto-detects the layout of each line. The following formats are recognized:</p>'
+ +'<ul><li><b>Alpaca</b>: {"instruction":"...","input":"...","output":"..."}</li>'
+ +'<li><b>ShareGPT</b>: {"conversations":[{"from":"human",...},{"from":"gpt",...}]}</li>'
+ +'<li><b>Messages</b>: {"messages":[{"role":"user",...},{"role":"assistant",...}]}</li>'
+ +'<li><b>Prompt/Completion</b>: {"prompt":"...","completion":"..."} or {"question":"...","answer":"..."}</li>'
+ +'<li><b>CSV</b>: Any CSV file; you tell it which columns hold the question and the answer.</li></ul>'
+ +'<h3>Data preparation details</h3>'
+ +'<h4>Cleaning and deduplication</h4>'
+ +'<p>Duplicate examples (after normalising whitespace) are removed. Malformed rows (empty fields, unknown format) are dropped with a reason shown in results.</p>'
+ +'<h4>Decontamination</h4>'
+ +'<p>Any training example whose text appears in your test files is <b>removed</b>. This keeps your evaluation scores honest: the model never sees its test examples during training.</p>'
+ +'<h4>Splitting</h4>'
+ +'<p>Data is split into a large <b>train</b> set and a small <b>validation</b> set. If validation loss rises while train loss falls, the model is memorizing: retrain with fewer epochs.</p>'
+ +'<h4>Hugging Face datasets</h4>'
+ +'<p>Format: owner/name, optionally :config@split#limit. Example: yahma/alpaca-cleaned#2000. License info is on the dataset card.</p>'
+ +'<h3>Evaluation details</h3>'
+ +'<h4>Perplexity</h4>'
+ +'<p>Measures how well the model predicts text. Lower = better. Use the same file before and after training to see if domain training helped.</p>'
+ +'<h4>Custom benchmark scoring modes</h4>'
+ +'<ul><li><b>exact</b> (default): case-insensitive match</li>'
+ +'<li><b>contains</b>: expected text appears in output</li>'
+ +'<li><b>regex</b>: you provide a pattern</li>'
+ +'<li><b>numeric</b>: last number in output must match expected</li>'
+ +'<li><b>python</b>: generated code block is executed; must run and print expected output</li></ul>'
+ +'<h3>Training parameters explained</h3>'
+ +'<table>'
+ +'<tr><th>Parameter</th><th>What it controls</th></tr>'
+ +'<tr><td><b>base_model</b></td><td>Original model to teach. Use the Instruct version. Check GPU memory requirements.</td></tr>'
+ +'<tr><td><b>max_seq_len</b></td><td>Longest example allowed. Lower = less GPU memory. 2048 is a good default.</td></tr>'
+ +'<tr><td><b>epochs</b></td><td>Passes over your data. 1-2 is enough. More = risk of memorizing examples.</td></tr>'
+ +'<tr><td><b>lora_r</b></td><td>Adapter capacity. 8=minimal, 16=balanced, 32=thorough. More = more GPU memory.</td></tr>'
+ +'<tr><td><b>learning_rate</b></td><td>Weight adjustment speed. 2e-4 default. Lower if loss jumps erratically.</td></tr>'
+ +'<tr><td><b>backend</b></td><td>Engine: auto, unsloth (NVIDIA), peft (any GPU/CPU), mlx (Apple Silicon).</td></tr></table>'
+ +'<h3>Export and quantization</h3>'
+ +'<table><tr><th>Level</th><th>Size</th><th>Quality</th><th>Best for</th></tr>'
+ +'<tr><td><b>q4_k_m</b></td><td>~1/3 model size</td><td>Very good</td><td>Everyday use</td></tr>'
+ +'<tr><td><b>q8_0</b></td><td>~1/2 model size</td><td>Near-original</td><td>Quality-critical</td></tr></table>'
+ +'<h3>Synth (generate training entries)</h3>'
+ +'<p>Reads each document passage, asks an LLM to write Q&amp;A examples, optionally runs the code to catch hallucinated APIs, then saves to a named library. Prepare data picks it up by name.</p>'
+ +'<h3>Libraries</h3>'
+ +'<p>Named collections of training entries stored in ~/.ftstudio/library/*.jsonl. Created by synth jobs, consumed by prep jobs.</p>'
+ +'<h3>GPU engines</h3>'
+ +'<ul><li><b>NVIDIA</b>: Unsloth (fastest) or PEFT</li><li><b>Apple Silicon</b>: MLX</li><li><b>AMD/CPU</b>: PEFT</li></ul>'
+ +'<p>Run the hardware check at <a href="/doctor" target="_blank">/doctor</a>.</p>'
+ +'<h3>Troubleshooting</h3>'
+ +'<ul><li><b>Out of memory</b>: Lower max_seq_len, lower lora_r, use the Low memory preset.</li>'
+ +'<li><b>No chat template</b>: Use the Instruct version of the model.</li>'
+ +'<li><b>Gated repo / 401</b>: Run huggingface-cli login and accept the model license.</li>'
+ +'<li><b>Module not found</b>: Run pip install -e ".[train]" and pip install -e ".[eval]".</li>'
+ +'<li><b>llama.cpp not found</b>: Set FTS_LLAMA_SERVER and FTS_LLAMA_PERPLEXITY to their full paths.</li></ul>'
+ +'</div>';
+ render();
+}
+$("#helpbtn").onclick=function(){showingHelp?guide():helpPage();showingHelp=!showingHelp};
+$("#home").onclick=function(){sel=null;showingHelp=false;if(ws)ws.close();render();guide()};
+function lane(){
+ var run=jobs.find(function(j){return j.status==="running"||j.status==="cancelling"}),q=jobs.filter(function(j){return j.status==="queued"}).length;
+ $("#lanetxt").textContent=run?"GPU busy: "+run.kind+" "+label(run)+", "+Math.round(Date.now()/1000-run.started)+"s":"GPU idle";
+ $("#bar").className=run?"":"idle";$("#queued").textContent=q?q+" waiting":""}
+function load(){
+ return api("/jobs?limit=100").then(function(r){jobs=r;render();lane();
+  if(!sel&&!showingHelp){var k=jobs.map(function(j){return j.id+j.status}).join();if(k!==gkey){gkey=k;guide()}}
+  if(sel&&jobs.length){var j=jobs.find(function(x){return x.id===sel});if(j)api("/jobs/"+sel).then(function(jj){paint(jj)})}}).catch(function(e){$("#lanetxt").textContent="API unreachable: "+e.message;return Promise.resolve()})}
+load();setInterval(load,2000);setInterval(lane,1000);
+
+var models=[];
+api("/models").then(function(m){models=m;var dl=document.getElementById("bases");if(dl)dl.innerHTML=m.map(function(x){return '<option value="'+esc(x.id)+'" label="'+esc(x.name)+'">'+esc(x.name)+'</option>'}).join("")}).catch(function(){});
+var mdesc=function(el){var m=models.find(function(x){return x.id===el.value.trim()});var s=el.parentNode.querySelector(".mdesc");
+ if(!s){s=document.createElement("small");s.className="mdesc";el.insertAdjacentElement("afterend",s)}
+ s.textContent=m?m.name+": about "+m.vram_gb+" GB of GPU memory, "+(m.load_in_4bit?"4-bit QLoRA":"16-bit LoRA")+". "+m.notes:""};
+document.addEventListener("input",function(e){if(e.target.matches&&e.target.matches("[data-k=base_model]"))mdesc(e.target)});
+
+api("/datasets").then(function(d){dsets=d}).catch(function(){});
+var dsets=[];
+var pi=SCHEMA.prep.find(function(x){return x[0]==="inputs"});if(pi){pi[1]="Your data files (optional if you use a Hugging Face dataset)";pi[5]=0}
+SCHEMA.prep.splice(1,0,["hf_datasets","Hugging Face datasets, one per line","lines","yahma/alpaca-cleaned#2000","Format: owner/name, optionally :config@split#limit. A #limit downloads only that many rows. Click a known dataset below to add it.",0]);
+new MutationObserver(function(){var t=document.querySelector("[data-k=hf_datasets]");
+ if(t&&!t.parentNode.querySelector(".chips")){var c=document.createElement("div");c.className="chips";c.style.cssText="display:flex;flex-wrap:wrap;gap:6px";
+  c.innerHTML=dsets.map(function(d){return '<button type="button" class="btn" data-ds="'+esc(d.spec)+'" title="'+esc(d.desc)+'">'+esc(d.name)+'</button>'}).join("");t.insertAdjacentElement("afterend",c)}}).observe($("#frm"),{childList:true,subtree:true});
+document.addEventListener("click",function(e){var b=e.target.closest?e.target.closest("[data-ds]"):null;if(!b)return;
+ var t=document.querySelector("[data-k=hf_datasets]"),lines=t.value.split("\n").map(function(x){return x.trim()}).filter(Boolean);
+ if(lines.indexOf(b.getAttribute("data-ds"))===-1)lines.push(b.getAttribute("data-ds"));t.value=lines.join("\n")});
+
+KINDS.push(["synth","Generate training entries"]);
+SCHEMA.synth=[
+ ["gguf","GGUF model that writes the entries","text","/models/Qwen3.5-4B-Q4_K_M.gguf","Started with llama.cpp for this task only. Or use a running server below.",0],
+ ["server_url","...or a running OpenAI-compatible server","text","http://127.0.0.1:9642","Optional. Use instead of a GGUF if your model is already served.",0],
+ ["sources","Raw documents or folders, one per line","lines","/projects/mylib/docs","Markdown, reStructuredText, text and Python files are read. Folders are searched recursively.",1],
+ ["library","Library name","text","mylib_docs","Entries are saved to this named library, which Prepare data can use.",1],
+ ["mode","Add to it, or start a new one","text","append","append adds entries. create starts fresh and refuses if the library already has entries.",0],
+ ["prompt","Your own generation prompt (optional)","lines","","Leave empty for the built-in prompt. Must contain {chunk}; {n} and {source} are also filled in.",0],
+ ["must_import","Code must import this module","text","mylib","Entries whose code does not import it are rejected.",0],
+ ["per_chunk","Entries per passage","num","3","",0],
+ ["max_chunks","Only process this many passages (tests)","num","","Use with the dry-run preset.",0]];
+var libs=[];api("/library").then(function(l){libs=l}).catch(function(){});
+new MutationObserver(function(){var t=document.querySelector("[data-k=libraries]");
+ if(t&&!t.parentNode.querySelector(".lchips")){var c=document.createElement("div");c.className="lchips";c.style.cssText="display:flex;flex-wrap:wrap;gap:6px";
+  c.innerHTML=libs.length?libs.map(function(l){return '<button type="button" class="btn" data-lib="'+esc(l.name)+'">'+esc(l.name)+' ('+l.entries+')</button>'}).join(""):"<small>No libraries yet.</small>";t.insertAdjacentElement("afterend",c)}}).observe($("#frm"),{childList:true,subtree:true});
+document.addEventListener("click",function(e){var b=e.target.closest?e.target.closest("[data-lib]"):null;if(!b)return;
+ var t=document.querySelector("[data-k=libraries]"),v=t.value.split("\n").map(function(x){return x.trim()}).filter(Boolean);if(v.indexOf(b.getAttribute("data-lib"))===-1)v.push(b.getAttribute("data-lib"));t.value=v.join("\n")});
+function resSynth(r){var c=function(l,v){return '<div class="card"><b>'+esc(v)+'</b><span>'+esc(l)+'</span></div>'},rej=Object.entries(r.rejected||{});
+ return '<div class="cards">'+c("passages read",r.chunks)+c("entries written by the model",r.generated)+c("kept",r.kept)+c("fixed by re-running code",r.repaired)+'</div>'
+ +(rej.length?'<h3>Why entries were rejected</h3><table>'+rej.map(function(pair){var k=pair[0],n=pair[1];return '<tr><td>'+esc(k)+'</td><td>'+n+'</td></tr>'}).join("")+'</table>':"<p>Nothing was rejected.</p>")
+ +'<h3>'+(r.dry_run?"Dry run: nothing was added to your library":"Saved to library "+esc(r.library))+'</h3><pre>'+esc(r.target)+'</pre>'
+ +'<p><a href="/jobs/'+sel+'/artifacts/rejects.jsonl" target="_blank">Read the rejected entries</a>'
+ +(r.dry_run?' | <a href="/jobs/'+sel+'/artifacts/preview.jsonl" target="_blank">Read the entries it would keep</a>':' | <a href="/library/'+encodeURIComponent(r.library)+'" target="_blank">Browse the library</a>')+'</p>'}
+var _rr=renderRes;renderRes=function(j){return j.kind==="synth"&&j.result?resSynth(j.result):_rr(j)};
+
+function prepLabel(p){var parts=[].concat((p.inputs||[]).map(base),(p.hf_datasets||[]).map(function(x){return typeof x==="string"?x.split(/[@#:]/)[0]:x.repo}),(p.libraries||[]).map(function(l){return "library "+l}));
+ return parts.length?parts[0]+(parts.length>1?" +"+(parts.length-1):""):"prepare data"}
+
+for(var qi=0;qi<["eval","synth"].length;qi++){var qk=["eval","synth"][qi];var g=SCHEMA[qk].find(function(x){return x[0]==="gguf"});if(g){g[3]="Pick one below or paste a path, e.g. C:\\models\\Qwen3.5-2B-Q4_K_M.gguf";
+ g[4]=qk==="eval"?"The model to score. Test the original first, so you have numbers to beat.":"The model that writes the entries. Bigger is better for quality."}}
+var gg={local:[],examples:[]};
+function paintG(){var dl=document.getElementById("ggufs");if(dl)dl.innerHTML=gg.local.map(function(m){return '<option value="'+esc(m.path)+'">'+esc(m.name)+'</option>'}).join("");
+ document.querySelectorAll(".gchips").forEach(function(c){
+  c.innerHTML=(gg.local.length?'<small>On this computer (click to use):</small><div style="display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px">'+gg.local.map(function(m){return '<button type="button" class="btn" data-gpath="'+esc(m.path)+'" title="'+esc(m.path)+'">'+esc(m.name)+' ('+m.size_mb+' MB)</button>'}).join("")+'</div>':"<small>No .gguf files found yet in your models folder.</small>")
+  +'<details><summary>No model yet? Download an example</summary>'+gg.examples.map(function(e,i){return '<div style="margin:8px 0"><button type="button" class="btn" data-gex="'+i+'">Download'+(e.size?" ("+esc(e.size)+")":"")+'</button> <b>'+esc(e.name)+'</b><br><small>'+esc(e.note)+'</small></div>'}).join("")+'<small>Saved in '+esc(gg.models_dir||"your models folder")+'. Gated models need huggingface-cli login.</small></details>'})}
+var loadG=function(){api("/gguf").then(function(g){gg=g;paintG()}).catch(function(){})};loadG();setInterval(loadG,6000);
+new MutationObserver(function(){document.querySelectorAll("#frm [data-k=gguf]").forEach(function(t){
+ if(!t.parentNode.querySelector(".gchips")){t.setAttribute("list","ggufs");var c=document.createElement("div");c.className="gchips";t.insertAdjacentElement("afterend",c);paintG()}})}).observe($("#frm"),{childList:true,subtree:true});
+document.addEventListener("click",function(e){var t=e.target.closest?e.target.closest("[data-gpath],[data-gex]"):null;if(!t)return;
+ if(t.hasAttribute("data-gpath")){var i=t.closest("label").querySelector("[data-k=gguf]");i.value=t.getAttribute("data-gpath");return}
+ var x=gg.examples[+t.getAttribute("data-gex")];t.disabled=true;t.textContent="Queued: watch the job list";
+ api("/jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind:"fetch",params:{repo:x.repo,file:x.file}})}).then(load).catch(function(er){t.textContent="Failed: "+er.message})});
+
+HINTS.unshift([/CPU-only build|cuda\.is_available\(\) is False|cannot find any torch accelerator/i,"PyTorch has no GPU support in this Python environment. Close ftstudio, run install.bat (python install.py), then start it with run.bat."]);
+api("/doctor").then(function(d){if(d.status==="ok")return;var b=document.createElement("div");b.id="gpubanner";b.setAttribute("role","alert");
+ b.style.cssText="background:#fff3cd;color:#5c3d00;padding:8px 20px;border-bottom:1px solid #e6c36a;font-size:13px";
+ b.innerHTML='<b>'+(d.status==="no_gpu"?"No supported GPU:":"Training will not work yet.")+'</b> '+esc(d.message)+' '+esc(d.fix);
+ document.querySelector("header").insertAdjacentElement("afterend",b);document.body.style.gridTemplateRows="auto auto 1fr"}).catch(function(){});
+
+SCHEMA.train.push(["backend","Training engine (optional)","text","auto","Leave empty or auto to pick for your hardware: unsloth (NVIDIA), peft (any GPU or CPU), mlx (Apple Silicon).",0]);
+HINTS.unshift([/No module named '(peft|mlx_lm|mlx|unsloth|transformers|accelerate)'/,"A training package for your hardware is missing. Run install.bat (or python install.py) again, and start with run.bat."]);
+HINTS.unshift([/convert_hf_to_gguf|llama-quantize not found/i,"Exporting needs llama.cpp. Clone it, set FTS_LLAMA_CPP to its folder, and put llama-quantize on PATH (or set FTS_LLAMA_QUANTIZE)."]);
+<script>
+(function(){if(typeof SCHEMA==='undefined'||!SCHEMA.export)return;var isArr=Array.isArray(SCHEMA.export);var fields=isArr?SCHEMA.export:SCHEMA.export.fields;if(!fields)return;var has=fields.some(function(f){return(f.name||f[0])==='auto_eval'});if(has)return;var field={name:'auto_eval',label:'Post-export test suites (JSON, optional)',type:'textarea',placeholder:'{"perplexity":{"file":"path/to/test.txt","ctx":512}} or {"custom":{"file":"path/to/eval.jsonl","max_tokens":512}}'};if(isArr)SCHEMA.export.push(field);else SCHEMA.export.fields.push(field);})();
+</script>
+</script></body></html>

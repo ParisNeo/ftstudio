@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+#custom folders
+data/*
+unsloth_compiled_cache
+.lollms
+.lollms_code

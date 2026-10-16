@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ftstudio"
+version = "0.1.0"
+description = "Own-built fine-tuning studio: job runner, eval rig, (later) data prep / Unsloth training / GGUF export"
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "httpx>=0.27"]
+
+[project.optional-dependencies]
+eval = ["lm-eval"]
+dev = ["pytest"]
+train = ["unsloth>=2026.1", "trl", "datasets"]
+hf = ["datasets"]
+train-generic = ["transformers>=4.46", "peft>=0.13", "accelerate>=1.0", "datasets", "safetensors"]
+train-mlx = ["mlx-lm[train]", "transformers>=4.46", "peft>=0.13", "accelerate>=1.0", "datasets", "safetensors"]
+
+[tool.setuptools.packages.find]
+include = ["ftstudio*"]
+
+[tool.setuptools.package-data]
+ftstudio = ["static/*.html"]
