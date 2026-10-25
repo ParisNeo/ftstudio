@@ -224,3 +224,5 @@ data/*
 unsloth_compiled_cache
 .lollms
 .lollms_code
+
+*.db
