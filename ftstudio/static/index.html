@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.ico">
 <title>ftstudio</title>
 <style>
 :root{--paper:#eef1f4;--panel:#fbfcfd;--ink:#16212c;--mut:#667585;--line:#d5dce3;--steel:#25607f;--amber:#c97a00;--moss:#3b7d4f;--brick:#b4443a;
@@ -401,7 +402,6 @@ api("/doctor").then(function(d){if(d.status==="ok")return;var b=document.createE
 SCHEMA.train.push(["backend","Training engine (optional)","text","auto","Leave empty or auto to pick for your hardware: unsloth (NVIDIA), peft (any GPU or CPU), mlx (Apple Silicon).",0]);
 HINTS.unshift([/No module named '(peft|mlx_lm|mlx|unsloth|transformers|accelerate)'/,"A training package for your hardware is missing. Run install.bat (or python install.py) again, and start with run.bat."]);
 HINTS.unshift([/convert_hf_to_gguf|llama-quantize not found/i,"Exporting needs llama.cpp. Clone it, set FTS_LLAMA_CPP to its folder, and put llama-quantize on PATH (or set FTS_LLAMA_QUANTIZE)."]);
-<script>
 (function(){if(typeof SCHEMA==='undefined'||!SCHEMA.export)return;var isArr=Array.isArray(SCHEMA.export);var fields=isArr?SCHEMA.export:SCHEMA.export.fields;if(!fields)return;var has=fields.some(function(f){return(f.name||f[0])==='auto_eval'});if(has)return;var field={name:'auto_eval',label:'Post-export test suites (JSON, optional)',type:'textarea',placeholder:'{"perplexity":{"file":"path/to/test.txt","ctx":512}} or {"custom":{"file":"path/to/eval.jsonl","max_tokens":512}}'};if(isArr)SCHEMA.export.push(field);else SCHEMA.export.fields.push(field);})();
 </script>
 </script></body></html>

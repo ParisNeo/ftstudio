@@ -14,9 +14,9 @@ HERE = Path(__file__).resolve().parent
 CLI = [sys.executable, "-u", str(HERE / "lollms_jev.py")]
 ENV = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}  # children print UTF-8 on Windows too
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # lollms_client colours its log lines
-CMDS = {"add", "import-cls", "synth", "distill", "train", "calibrate", "eval", "export", "import-jev", "baseline", "publish", "bench"}
+CMDS = {"add", "import-cls", "synth", "distill", "train", "calibrate", "eval", "export", "import-jev", "baseline", "publish", "bench", "import-router", "synth-router", "gen-games", "import-chess"}
 app = FastAPI()
-job = {"active": False, "cmd": "", "log": [], "code": None, "steps": [], "proc": None, "stopped": False}
+job = {"pause_dir": None, "active": False, "cmd": "", "log": [], "code": None, "steps": [], "proc": None, "stopped": False}
 
 
 def running():
@@ -45,6 +45,10 @@ def _run_steps(steps):
         for line in p.stdout:
             job["log"].append(ANSI.sub("", line.rstrip("\n")))
         p.wait()
+        if p.returncode == 75:  # training paused itself (progress saved)
+            job["steps"][i]["status"] = "paused"
+            job["code"] = 75
+            break
         ok = p.returncode == 0
         job["steps"][i]["status"] = "done" if ok else ("skipped" if optional and not job["stopped"] else "failed")
         if not ok and not optional:
@@ -57,10 +61,10 @@ def _run_steps(steps):
     job["env"] = None  # a token passed for this job does not outlive it
 
 
-def launch(cmd, steps, env=None):
+def launch(cmd, steps, env=None, pause_dir=None):
     if running():
         raise HTTPException(409, "a job is already running")
-    job.update(active=True, cmd=cmd, env=env, log=[], code=None, stopped=False, steps=[{"label": l, "status": "pending"} for l, _, _ in steps])
+    job.update(active=True, cmd=cmd, env=env, pause_dir=pause_dir, log=[], code=None, stopped=False, steps=[{"label": l, "status": "pending"} for l, _, _ in steps])
     threading.Thread(target=run_steps, args=(steps,), daemon=True).start()
     return {"ok": True}
 
@@ -84,7 +88,9 @@ def start(body: dict):
     cmd, args = body.get("cmd"), dict(body.get("args", {}))
     if cmd not in CMDS:
         raise HTTPException(400, "unknown command")
-    return launch(cmd, [(cmd, argv_for(cmd, args, args.pop("_files", [])), False)])
+    out = args.get("--out") if cmd == "train" else None
+    pause_dir = out if out and (HERE / out).resolve().parent == (HERE / "runs").resolve() else None
+    return launch(cmd, [(cmd, argv_for(cmd, args, args.pop("_files", [])), False)], pause_dir=pause_dir)
 
 
 CATALOG = [  # kind: choice = pick a class, yesno = binary, score = 1..K rubric, mc = options differ per row
@@ -105,6 +111,10 @@ CATALOG = [  # kind: choice = pick a class, yesno = binary, score = 1..K rubric,
     dict(id="sealuzh/app_reviews", kind="score", text=["review"], label="star", q="Rate the app review: 1 = very negative, 5 = very positive.", blurb="App store reviews, 1-5 stars"),
     dict(id="nyu-mll/glue", eval_split="validation_matched", alias="mnli", config="mnli", kind="yesno", text=["premise", "hypothesis"], label="label", q="Does the premise entail the hypothesis?", yes=["0"], blurb="Natural-language inference"),
     dict(id="google/boolq", eval_split="validation", kind="yesno", text=["passage"], label="answer", qcol="question", yes=["True"], blurb="Yes/no questions about a passage"),
+    # agent skills: route a prompt to the right model, play games from text descriptors
+    dict(id="ParisNeo/lollms_smart_router_dataset", kind="router", blurb="Pick the best model for a prompt from capability cards (your dataset, parsed, deduped, roster variants, smoothed labels)"),
+    dict(id="lollms-jev/generated-games", kind="games", blurb="Tic-tac-toe, Nim, blackjack, mazes, rock-paper-scissors from text descriptors; labels from exact solvers"),
+    dict(id="Lichess/chess-puzzles", kind="chess", blurb="Chess tactics from FEN, CC0. Needs `pip install chess`"),
     # picking among options that change every time (the core Jev skill)
     dict(id="cais/mmlu", eval_split="test", config="all", split="auxiliary_train", kind="mc", text=["question"], opts="choices", label="answer", q="Which option is correct?", blurb="Multiple-choice questions, options vary"),
     dict(id="MaziyarPanahi/Jev-RAG-Claim-Verification-130K", kind="jev", blurb="RAG grounding: is the answer supported by its context? (Jev format, split by context)"),
@@ -116,9 +126,11 @@ _R = lambda names: [_ID[n] for n in names.split()]  # noqa: E731
 RECIPES = {
     "allround": dict(title="All-rounder (recommended)", blurb="A bit of everything: routing, guarding, judging, picking answers.",
                      ids=_R("ag_news jailbreak-classification prompt-injections sms_spam imdb yelp_review_full mnli boolq mmlu hellaswag")),
-    "router": dict(title="Router", blurb="Sort messages into the right bucket.", ids=_R("ag_news dbpedia_14 yahoo_answers_topics language-identification sms_spam")),
+    "router": dict(title="Sorter", blurb="Sort messages into the right bucket (topic, language, spam).", ids=_R("ag_news dbpedia_14 yahoo_answers_topics language-identification sms_spam")),
     "judge": dict(title="Judge", blurb="Is this answer grounded in its context? Is this request or response unsafe? (Jev-format data)",
                   ids=_R("Jev-RAG-Claim-Verification-130K Jev-Safety-Refusal-Decisions-150K")),
+    "agent": dict(title="Agent brain", blurb="Choose the right model for a prompt from capability cards, and play games from text descriptions.",
+                  ids=_R("lollms_smart_router_dataset generated-games chess-puzzles")),
     "guard": dict(title="Guard", blurb="Flag prompt injections, jailbreaks, toxic and spam input.", ids=_R("prompt-injections jailbreak-classification toxic-chat sms_spam")),
     "reader": dict(title="Reader", blurb="Judge text: sentiment, ratings, yes/no questions.", ids=_R("imdb yelp_review_full sst5 app_reviews mnli boolq")),
     "thinker": dict(title="Thinker", blurb="Pick the right answer among several options.", ids=_R("mmlu hellaswag boolq mnli")),
@@ -145,6 +157,9 @@ EXAMPLE = r'''{"state": "Subject: Double charge on my card\nHi, I was billed twi
 {"state": "Candidate: 6 years of Python, led a team of 4, no cloud experience. Role requires: Python (must), AWS (must), team lead (nice).", "questions": [{"type": "yesno", "text": "Does the candidate meet every must-have requirement?", "label": false}, {"type": "score", "text": "Overall fit for the role. 1 = poor, 5 = excellent.", "levels": 5, "label": 3}]}
 {"state": "Review: Great screen, battery dies by mid-afternoon though. Would still recommend.", "questions": [{"type": "score", "text": "Reviewer satisfaction. 1 = very negative, 5 = very positive.", "levels": 5, "label": 4}, {"type": "choice", "text": "Main topic of the complaint, if any?", "options": ["battery", "screen", "price", "shipping", "none"], "label": "battery"}]}
 {"state": "Unlabelled example: Customer writes that the invoice PDF will not open on their phone and asks if someone can resend it.", "questions": [{"type": "choice", "text": "Which team should handle this ticket?", "options": ["billing", "technical", "sales", "other"]}, {"type": "yesno", "text": "Is the customer asking for a refund?"}]}
+{"state": "Fix this Python bug: for i in range(10) print(i)", "questions": [{"type": "choice", "text": "Pick the model that should answer the user's prompt. Prefer the smallest, cheapest model that can do the job well; use a specialist when the task matches its specialty (code, vision, speech, translation, embeddings, summarisation...); use a large general model only for genuinely complex tasks.\nModels:\n- acme/tiny-chat-1b: Tiny chat model, very cheap, simple questions only.\n- acme/coder-7b: Code specialist: writes, debugs and explains code.\n- acme/whisper-lite: Speech-to-text only.\n- acme/frontier-xl: Large reasoning model, expensive, strongest on hard multi-step problems.", "options": ["acme/tiny-chat-1b", "acme/coder-7b", "acme/whisper-lite", "acme/frontier-xl"], "label": "acme/coder-7b"}]}
+{"state": "Say hi to my new colleague", "questions": [{"type": "choice", "text": "Pick the model that should answer the user's prompt. Prefer the smallest, cheapest model that can do the job well; use a specialist when the task matches its specialty (code, vision, speech, translation, embeddings, summarisation...); use a large general model only for genuinely complex tasks.\nModels:\n- acme/tiny-chat-1b: Tiny chat model, very cheap, simple questions only.\n- acme/coder-7b: Code specialist: writes, debugs and explains code.\n- acme/whisper-lite: Speech-to-text only.\n- acme/frontier-xl: Large reasoning model, expensive, strongest on hard multi-step problems.", "options": ["acme/tiny-chat-1b", "acme/coder-7b", "acme/whisper-lite", "acme/frontier-xl"], "label": "acme/tiny-chat-1b"}]}
+{"state": "Game: grid maze. You are P and must reach G. Each move steps one cell up, down, left or right. # is a wall; you cannot leave the grid.\nMap (top row first):\nP.#.\n..#G\n....\nIt is your move.", "questions": [{"type": "choice", "text": "Which move is on a shortest path to G?", "options": ["right", "down"], "target": [0.0, 1.0]}]}
 '''
 PRESETS = {"quick": (500, 1), "balanced": (2000, 2), "thorough": (5000, 3)}
 
@@ -173,6 +188,11 @@ def auto(body: dict):
     for f in body.get("files", []):
         steps.append((f"Add {os.path.basename(f)}", argv_for("add", {"--db": db}, [f]), False))
     for d in body.get("datasets", []):
+        if d["kind"] in ("router", "games", "chess"):
+            cmd, args = {"router": ("import-router", {"--dataset": d["id"]}), "games": ("gen-games", {"--n": max(60, limit // 5)}),
+                         "chess": ("import-chess", {"--dataset": d["id"], "--limit": max(100, limit // 2)})}[d["kind"]]
+            steps.append((f"{'Generate' if d['kind'] == 'games' else 'Import'} {d['id']}", argv_for(cmd, {"--db": db, **args}), True))
+            continue
         if d["kind"] == "jev":
             steps.append((f"Import {d['id']}", argv_for("import-jev", {"--db": db, "--dataset": d["id"], "--limit": limit}), True))
             continue
@@ -190,7 +210,7 @@ def auto(body: dict):
         (HERE / "runs" / name).mkdir(parents=True, exist_ok=True)
         (HERE / "runs" / name / "bench_specs.json").write_text(json.dumps(specs), encoding="utf-8")
         steps.append(("Benchmark vs frozen base", argv_for("bench", {"--ckpt": f"runs/{name}", "--limit": 300}), True))
-    return launch("auto", steps)
+    return launch("auto", steps, pause_dir=f"runs/{name}")
 
 
 @app.post("/api/finalize")
@@ -216,6 +236,48 @@ def finalize(body: dict):
 @app.get("/api/job")
 def state(since: int = 0):
     return {"running": running(), "cmd": job["cmd"], "code": job["code"], "steps": job["steps"], "n": len(job["log"]), "lines": job["log"][since:]}
+
+
+@app.post("/api/job/pause")
+def pause():
+    """Graceful: training saves a resume point at the next step and exits. Other jobs have nothing to pause (use Stop)."""
+    if not running() or not job.get("pause_dir"):
+        raise HTTPException(400, "only a running training job can be paused; use Stop for the others")
+    (HERE / job["pause_dir"]).mkdir(parents=True, exist_ok=True)
+    (HERE / job["pause_dir"] / "STOP").write_text("1")
+    return {"ok": True}
+
+
+@app.get("/api/paused")
+def paused():
+    out = []
+    for f in sorted(HERE.glob("runs/*/resume_info.json")):
+        try:
+            out.append({"name": f.parent.name, **json.loads(f.read_text())})
+        except ValueError:
+            pass
+    return out
+
+
+@app.post("/api/resume")
+def resume(body: dict):
+    name = re.sub(r"[^\w-]", "_", body.get("name", ""))
+    ck = f"runs/{name}"
+    if not (HERE / ck / "resume.pt").exists():
+        raise HTTPException(400, f"nothing to resume in {ck}")
+    steps = [("Resume training (+ calibrate)", argv_for("train", {"--resume": True, "--out": ck, "--db": f"{name}.db"}), False),
+             ("Evaluate", argv_for("eval", {"--db": f"{name}.db", "--ckpt": ck}), True)]
+    if (HERE / ck / "bench_specs.json").exists():
+        steps.append(("Benchmark vs frozen base", argv_for("bench", {"--ckpt": ck, "--limit": 300}), True))
+    return launch("auto", steps, pause_dir=ck)
+
+
+@app.post("/api/discard")
+def discard(body: dict):
+    name = re.sub(r"[^\w-]", "_", body.get("name", ""))
+    for f in ("resume.pt", "resume_info.json", "STOP"):
+        (HERE / "runs" / name / f).unlink(missing_ok=True)
+    return {"ok": True}
 
 
 @app.post("/api/job/stop")
@@ -298,6 +360,7 @@ table{border-collapse:collapse}td,th{padding:3px 12px 3px 0;text-align:left}.q{d
 <label style="flex-direction:row;align-items:center;gap:6px;margin-left:auto">DB <input id="db" value="jev.db" style="width:160px"></label></header>
 <main>
 <section id="easy" class="on">
+ <div class="card" id="pausedc" style="display:none"><h2>Paused builds</h2><div id="pausedl"></div></div>
  <div class="card"><h2>1 · What should it decide?</h2><div class="grid" id="rec"></div>
   <details style="margin-top:10px"><summary>Customize datasets</summary><div class="grid" id="cat" style="margin-top:8px"></div></details>
   <details style="margin-top:10px"><summary>Add my own dataset</summary><div class="grid" style="margin-top:8px">
@@ -344,7 +407,9 @@ table{border-collapse:collapse}td,th{padding:3px 12px 3px 0;text-align:left}.q{d
   <div class="grid" id="f-teacher"></div>
   <div class="grid" style="margin-top:10px"><label>Synth examples<input id="synth.n" value="200"></label><label>Votes per question (k)<input id="distill.k" value="5"></label></div>
   <button class="run" onclick="run('synth',{...collect('teacher'),'--n':$('synth.n').value})">Synthesize</button>
-  <button class="run" onclick="run('distill',{...collect('teacher'),'--k':$('distill.k').value})">Distill labels</button></div>
+  <button class="run" onclick="run('distill',{...collect('teacher'),'--k':$('distill.k').value})">Distill labels</button>
+  <button class="run" title="The teacher invents model rosters with capability cards and user prompts; label them with Distill afterwards" onclick="run('synth-router',{...collect('teacher'),'--n':$('synth.n').value})">Synthesize routing data</button>
+  <button class="sec" title="Exact-solver labels, no teacher needed" onclick="run('gen-games',{'--n':$('synth.n').value})">Generate game positions</button></div>
 </section>
 <section id="train">
  <div class="card"><h2>Fine-tune</h2><div class="grid" id="f-train"></div>
@@ -353,6 +418,7 @@ table{border-collapse:collapse}td,th{padding:3px 12px 3px 0;text-align:left}.q{d
   <button class="run" onclick="train()">Train</button>
   <button class="run" style="background:none;color:var(--fg);border:1px solid var(--line)" onclick="run('calibrate',{'--ckpt':$('train.out').value})">Re-calibrate</button>
   <button class="run" style="background:none;color:var(--fg);border:1px solid var(--line)" onclick="run('eval',{'--ckpt':$('train.out').value})">Eval on val</button>
+  <button class="run" style="background:none;color:var(--fg);border:1px solid var(--line)" title="Continue a paused or interrupted training run from its last save" onclick="run('train',{'--resume':true,'--out':$('train.out').value})">Resume</button>
   <button class="run" style="background:none;color:var(--fg);border:1px solid var(--line)" title="The untouched base model answers from its own logits. Your fine-tune should clearly beat this." onclick="run('baseline',{'--base':$('train.base').value})">Zero-training baseline</button>
   <button class="run" style="background:none;color:var(--fg);border:1px solid var(--line)" title="Official held-out splits vs the frozen base; needs the specs file the Easy tab writes" onclick="run('bench',{'--ckpt':$('train.out').value})">Benchmark</button></div>
 </section>
@@ -363,7 +429,7 @@ table{border-collapse:collapse}td,th{padding:3px 12px 3px 0;text-align:left}.q{d
   <button class="sec" onclick="addQ()">+ question</button><button class="run" id="go" onclick="predict()">Run</button>
   <div id="out" style="margin-top:14px"></div></div>
 </section></main>
-<div id="logbox"><div><span id="status">idle</span><button class="sec" style="margin:0;padding:2px 10px" onclick="fetch('/api/job/stop',{method:'POST'})">Stop</button></div><div class="pb"><i id="fbar"></i></div><pre id="log"></pre></div>
+<div id="logbox"><div><span id="status">idle</span><span><button class="sec" style="margin:0 6px 0 0;padding:2px 10px" title="Training saves its progress at the next step; continue later from the Easy tab" onclick="pause()">Pause</button><button class="sec" style="margin:0;padding:2px 10px" title="Kills the job now. Training can still resume from its last automatic save (every 50 steps)" onclick="fetch('/api/job/stop',{method:'POST'})">Stop</button></span></div><div class="pb"><i id="fbar"></i></div><pre id="log"></pre></div>
 <script>
 const $=id=>document.getElementById(id),esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const DEF={
@@ -388,7 +454,7 @@ async function poll(){try{const j=await(await fetch("/api/job?since="+since)).js
  if(j.n<since){since=0;$("log").textContent=""}
  if(j.lines.length){const el=$("log"),end=el.scrollTop+el.clientHeight>=el.scrollHeight-20;el.textContent+=j.lines.join("\n")+"\n";if(end)el.scrollTop=el.scrollHeight}since=j.n;watch(j);
  progress(j);
- document.querySelectorAll("button.run").forEach(b=>b.disabled=j.running);if(was&&!j.running){stats();ckpts()}was=j.running}catch(e){}setTimeout(poll,800)}
+ document.querySelectorAll("button.run").forEach(b=>b.disabled=j.running);if(was&&!j.running){stats();ckpts();loadPaused()}was=j.running}catch(e){}setTimeout(poll,800)}
 function addQ(){const d=document.createElement("div");d.className="q";
  d.innerHTML='<select><option>choice<option>yesno<option>score</select><input placeholder="Question"><input placeholder="choice: a, b, c  |  score: levels (e.g. 5)">';$("qs").appendChild(d)}
 async function predict(){const qs=[...document.querySelectorAll("#qs .q")].map(d=>{const[t,x,o]=[d.children[0].value,d.children[1].value,d.children[2].value];
@@ -411,12 +477,18 @@ async function auto(){const ds=[...document.querySelectorAll(".cb:checked")].map
  if(of){const sr=await(await fetch("/api/save",{method:"POST",headers:H,body:JSON.stringify({name:of.name,text:await of.text()})})).json();files=[sr.path]}
  const r=await fetch("/api/auto",{method:"POST",headers:H,body:JSON.stringify({datasets:ds,preset:document.querySelector("[name=pre]:checked").value,name:$("mname").value,holdout:$("hold").checked,base:$("base-custom").value.trim()||$("base").value,files})});
  if(!r.ok)return alert((await r.json()).detail);since=0;$("log").textContent="";losses=[];prog=null;eta="";mets=[];lastDs=ds.map(d=>d.id);$("done").textContent="";$("watch").style.display="block";$("expc").style.display="none"}
+async function pause(){const r=await fetch("/api/job/pause",{method:"POST"});if(!r.ok)return alert((await r.json()).detail);$("status").textContent+=" · pausing at the next step…"}
+async function loadPaused(){const r=await(await fetch("/api/paused")).json();$("pausedc").style.display=r.length?"block":"none";
+ $("pausedl").innerHTML=r.map(x=>`<div class="row"><span style="width:auto;flex:1">${esc(x.name)} · stopped at step ${x.step}/${x.total} (${Math.round(x.step/x.total*100)}%)</span><button class="run" style="margin:0" onclick="resumeRun('${esc(x.name)}')">Resume</button><button class="sec" style="margin:0" onclick="discardRun('${esc(x.name)}')">Discard</button></div>`).join("")}
+async function resumeRun(n){const r=await fetch("/api/resume",{method:"POST",headers:H,body:JSON.stringify({name:n})});if(!r.ok)return alert((await r.json()).detail);
+ since=0;$("log").textContent="";losses=[];prog=null;eta="";mets=[];$("mname").value=n;$("done").textContent="";$("watch").style.display="block";$("expc").style.display="none"}
+async function discardRun(n){if(!confirm("Discard the saved progress of "+n+"? Training will restart from scratch next time."))return;await fetch("/api/discard",{method:"POST",headers:H,body:JSON.stringify({name:n})});loadPaused()}
 function progress(j){for(const l of j.lines){if(l.startsWith("=== "))pg=null;const m=l.match(/step (\d+)\/(\d+) loss [\d.]+.*ETA (\S+)/);if(m)pg={a:+m[1],b:+m[2],eta:m[3]}}
  const n=j.steps.length,done=j.steps.filter(s=>s.status==="done"||s.status==="skipped").length;
- let t=j.running?"running: "+j.cmd:j.cmd?j.cmd+" finished (exit "+j.code+")":"idle";
+ let t=j.running?"running: "+j.cmd:j.cmd?(j.code===75?j.cmd+" paused: progress saved, resume from the Easy tab":j.cmd+" finished (exit "+j.code+")"):"idle";
  if(j.running&&n>1)t+=` · stage ${Math.min(done+1,n)}/${n}`;
  if(j.running&&pg)t+=` · training step ${pg.a}/${pg.b} (${Math.round(pg.a/pg.b*100)}%) · about ${pg.eta} left`;
- $("status").textContent=t;$("fbar").style.width=(j.running?(pg?pg.a/pg.b*100:(n>1?done/n*100:0)):(j.cmd&&j.code===0?100:0))+"%"}
+ $("status").textContent=t;$("fbar").style.width=(j.running?(pg?pg.a/pg.b*100:(n>1?done/n*100:0)):(j.code===0&&j.cmd?100:(j.code===75&&pg?pg.a/pg.b*100:0)))+"%"}
 function watch(j){for(const l of j.lines)if(l.startsWith("published: ")){const u=l.slice(11).trim();$("pmsg").innerHTML=`Published: <a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a>`}
  if(j.cmd!=="auto")return;
  for(const l of j.lines){const m=l.match(/step (\d+)\/(\d+) loss ([\d.]+)(?:.*ETA (\S+))?/);if(m){prog=[+m[1],+m[2]];eta=m[4]||"";losses.push(+m[3])}if(l.startsWith("[val calibrated]"))mets.push(l.slice(17))}
@@ -426,12 +498,12 @@ function watch(j){for(const l of j.lines)if(l.startsWith("published: ")){const u
  const mx=Math.max(...losses,.001);$("spark").innerHTML=losses.length>1?`<polyline fill="none" stroke="var(--acc)" stroke-width="2" points="${losses.map((v,i)=>`${i/(losses.length-1)*300},${58-v/mx*54}`).join(" ")}"/>`:"";
  $("mets").textContent=mets.join("\n");
  if(!j.running&&j.code===0&&j.steps.length){$("expc").style.display="block";$("done").textContent="Done. Checkpoint saved in runs/"+$("mname").value.replace(/[^\w-]/g,"_")}
- else if(!j.running&&j.code>0)$("done").textContent="A step failed. See the log below."}
+ else if(!j.running&&j.code===75)$("done").textContent="Paused. Use Resume (top of this tab) to continue where it stopped.";else if(!j.running&&j.code>0)$("done").textContent="A step failed. See the log below."}
 async function finalize(pub){const f=["merged","gguf","onnx"].filter(x=>$("x-"+x).checked);
  if(!f.length&&!pub)return alert("Tick at least one format");if(pub&&!$("repo").value.trim())return alert("Enter a repo id (user/name)");
  const r=await fetch("/api/finalize",{method:"POST",headers:H,body:JSON.stringify({name:$("mname").value,formats:f,quant:$("quant").value,int8:$("x-int8").checked,publish:pub,repo:$("repo").value.trim(),token:$("tok").value,private:$("priv").checked})});
  if(!r.ok)return alert((await r.json()).detail);since=0;$("log").textContent="";$("pmsg").textContent=pub?"Working… follow the log below":"Exporting… follow the log below"}
-addQ();stats();ckpts();poll();$("db").onchange=stats;
+addQ();stats();ckpts();loadPaused();poll();$("db").onchange=stats;
 </script></html>"""
 
 

@@ -41,8 +41,23 @@ def resolve_dataset(ds: dict) -> dict:
 
 def anchors(report: dict) -> tuple[str, str]:
     pr = report.get("template_probe")
-    if not pr or pr.get("error") or pr.get("anchors_error") or not pr.get("instruction_part") or not pr.get("response_part"):
-        raise ValueError("dataset has no usable template anchors; re-run prep with the model's tokenizer")
+    if not pr:
+        tok = report.get("tokenizer", "none")
+        raise ValueError(
+            f"dataset has no template_probe (prepared with tokenizer: {tok}). Re-run the prep job and set the tokenizer "
+            "to the exact model you plan to train (e.g. unsloth/Qwen3.5-2B)."
+        )
+    if pr.get("error") or pr.get("anchors_error"):
+        err = pr.get("error") or pr.get("anchors_error")
+        raise ValueError(
+            f"template probe generation failed during prep: {err}. Check that the tokenizer has a valid chat_template."
+        )
+    missing = [k for k in ("instruction_part", "response_part") if not pr.get(k)]
+    if missing:
+        raise ValueError(
+            f"dataset probe is missing {', '.join(missing)}. The tokenizer chat_template likely does not properly separate "
+            "the assistant's role marker from the generated text. Re-run prep with a proper instruct/chat model tokenizer."
+        )
     return pr["instruction_part"], pr["response_part"]
 
 

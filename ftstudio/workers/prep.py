@@ -29,6 +29,8 @@ def main(run_dir: str):
     p = json.loads((run / "params.json").read_text())
     tok = load_tokenizer(p["tokenizer"]) if p.get("tokenizer") else None
     rep = prepare(p, run, tok)
+    if p.get("tokenizer"):
+        rep["tokenizer"] = p["tokenizer"]
     (run / "result.json").write_text(json.dumps(rep, indent=2, ensure_ascii=False))
     print(json.dumps({k: rep[k] for k in ("read", "kept", "train", "val", "dropped", "formats", "length_stats")}, indent=2))
 

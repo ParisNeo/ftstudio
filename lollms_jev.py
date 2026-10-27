@@ -36,7 +36,7 @@ or point at a LoLLMs server explicitly (default port 9642):
          --teacher-model <model>            # add --teacher-key <key> if the server has security on
 Training uses Unsloth by default (CUDA); falls back to plain HF+PEFT if it is missing/fails; --no-unsloth forces plain.
 """
-import argparse, concurrent.futures as cf, hashlib, json, math, os, random, re, shutil, sqlite3, subprocess, sys, tempfile, time
+import argparse, concurrent.futures as cf, hashlib, json, math, os, random, re, shutil, signal, sqlite3, subprocess, sys, tempfile, time
 
 _UNSLOTH_ERR = None
 if len(sys.argv) > 1 and sys.argv[1] == "train" and "--no-unsloth" not in sys.argv:
@@ -411,6 +411,350 @@ def cmd_import_jev(a):
     print(f"imported {n} questions from {a.dataset} (skipped {skipped}); target={a.target}")
 
 
+# ----------------------------------------------------------------------------------------------
+# Agent skills: (1) route a prompt to the right model from capability cards, (2) play games from text descriptors
+# ----------------------------------------------------------------------------------------------
+ROUTER_PRINCIPLE = ("Pick the model that should answer the user's prompt. Prefer the smallest, cheapest model that can do the job well; "
+                    "use a specialist when the task matches its specialty (code, vision, speech, translation, embeddings, summarisation...); "
+                    "use a large general model only for genuinely complex tasks.")
+
+
+def router_question(models):  # models: [(name, description)] -> question text; options are the names
+    return ROUTER_PRINCIPLE + "\nModels:\n" + "\n".join(f"- {n}: {d}" for n, d in models)
+
+
+def smooth_target(n, idx, eps):
+    return [1 - eps if i == idx else eps / (n - 1) for i in range(n)]
+
+
+_RM = re.compile(r"^\s*(\d+)\s*-\s*(\S+?)\s*:?\s+(.+?)\s*$", re.M)
+
+
+def parse_router_row(prompt, solution):
+    """ParisNeo/lollms_smart_router_dataset row -> (user_prompt, [(name, description)], gold_index) or None."""
+    models = _RM.findall(prompt)
+    if len(models) < 2 or [int(m[0]) for m in models] != list(range(len(models))):
+        return None  # e.g. the few-shot 'Example:' rows that carry no model list
+    q = re.search(r"For the task: '(.*?)', which model", prompt, re.S)
+    if not q:
+        q = re.search(r"(?:^|\n)\s*[Pp]rompt:\s*(.*?)(?:\n\n(?:Which model|Select|Use the same|For reference)|\s*$)", prompt, re.S)
+    m = re.match(r"\s*(\d+)", solution or "")
+    if not q or not m or int(m.group(1)) >= len(models):
+        return None
+    names = [x[1] for x in models]
+    if len(set(names)) != len(names):
+        return None
+    return q.group(1).strip(), [(x[1], x[2]) for x in models], int(m.group(1))
+
+
+def cmd_import_router(a):
+    """Reshape the lollms smart-router data for this model: parse the model list and prompt out of the text, label with the
+    model NAME (an index means nothing once the list changes), dedupe, add roster variants, smooth the noisy labels."""
+    from datasets import load_dataset
+    ds = load_dataset(a.dataset, split=a.split)
+    rng = random.Random(a.seed)
+    con = db_connect(a.db)
+    seen, n, skipped = set(), 0, 0
+    for r in ds:
+        parsed = parse_router_row(r[a.prompt_col], r[a.solution_col])
+        if not parsed:
+            skipped += 1
+            continue
+        prompt, models, gold = parsed
+        key = (prompt, tuple(sorted(m[0] for m in models)))
+        if key in seen:
+            skipped += 1
+            continue
+        seen.add(key)
+        rosters = [models]
+        for _ in range(a.variants):  # same prompt, a different roster: drop up to 2 wrong models, reshuffle
+            others = [i for i in range(len(models)) if i != gold]
+            drop = set(rng.sample(others, rng.randint(1, min(2, len(models) - 3)))) if len(models) > 3 else set()
+            keep = [m for i, m in enumerate(models) if i == gold or i not in drop]
+            rng.shuffle(keep)
+            rosters.append(keep)
+        for ro in rosters:
+            names = [m[0] for m in ro]
+            idx = names.index(models[gold][0])
+            q = {"type": "choice", "text": router_question(ro), "options": names, "target": smooth_target(len(names), idx, a.smooth)}
+            n += add_example(con, prompt, [q], f"router:{a.dataset.split('/')[-1]}", a.val_pct, group=prompt)
+    con.commit()
+    print(f"imported {n} routing questions from {a.dataset} (skipped {skipped} rows: no model list / duplicate / unparsable)")
+
+
+def cmd_synth_router(a):
+    """Invent model rosters with capability cards plus user prompts through the teacher (lollms_client). Labels are left empty
+    for `distill` (independent votes) unless --trust-intended is given."""
+    set_teacher(a)
+    con = db_connect(a.db)
+    rng = random.Random(a.seed)
+    arch = ["tiny general chat model (1-3B)", "small general model (7-8B)", "large general reasoning model", "code specialist", "vision-language model",
+            "speech-to-text model", "text-to-image model", "embedding model", "summarisation specialist", "translation specialist", "math specialist",
+            "long-context model (200k tokens)", "multilingual model", "medical-domain model", "legal-domain model", "tool-calling agent model",
+            "fast low-latency model", "creative-writing model", "text-classification model"]
+
+    def one(_):
+        k, lang = rng.randint(4, 8), rng.choice(LANGS)
+        pick = rng.sample(arch, k)
+        prompt = (f"ROSTER task. Invent a roster of {k} AI models an application can route between. Give each a realistic provider/name and a 1-2 sentence "
+                  f"capability card (size class, strengths, limits, cost tier, context length or modality when relevant). Base the roster on these archetypes: "
+                  f"{'; '.join(pick)}.\nThen write 6 realistic end-user prompts in {lang} (varied domain and difficulty: some trivial, some matching a specialist, "
+                  "some genuinely hard). For each, name the best roster model (the cheapest that does the job well; a specialist if the task matches its "
+                  'specialty) and give a one-sentence reason.\nReply with JSON only: {"models":[{"name":"provider/name","description":"..."}],'
+                  '"items":[{"prompt":"...","best":"provider/name","why":"..."}]}')
+        return parse_json(chat("You design realistic test data for LLM routers. Output JSON only.", prompt, temperature=1.0, max_tokens=2500))
+
+    n = 0
+    with cf.ThreadPoolExecutor(a.workers) as ex:
+        for j in ex.map(one, range(a.n)):
+            try:
+                models = [(m["name"], m["description"]) for m in j["models"]]
+                names = [m[0] for m in models]
+                if len(set(names)) != len(names) or len(names) < 3:
+                    continue
+                for it in j["items"]:
+                    tgt = smooth_target(len(names), names.index(it["best"]), 0.05) if (a.trust_intended and it["best"] in names) else None
+                    q = {"type": "choice", "text": router_question(models), "options": names, **({"target": tgt} if tgt else {})}
+                    n += add_example(con, it["prompt"], [q], "synth:router", a.val_pct, group=it["prompt"])
+            except Exception:  # noqa: BLE001
+                continue
+            con.commit()
+    print(f"synthesised {n} routing questions" + ("" if a.trust_intended else " (unlabeled: run `distill` next)"))
+
+
+# --- games: exact solvers give exact labels, no teacher needed -------------------------------------------------
+_TTT_LINES = [(0, 1, 2), (3, 4, 5), (6, 7, 8), (0, 3, 6), (1, 4, 7), (2, 5, 8), (0, 4, 8), (2, 4, 6)]
+
+
+def _ttt_winner(b):
+    for x, y, z in _TTT_LINES:
+        if b[x] != "." and b[x] == b[y] == b[z]:
+            return b[x]
+    return None
+
+
+def _ttt_value(b, turn, _c={}):  # value for the player to move: +1 win, 0 draw, -1 loss (perfect play)
+    k = (b, turn)
+    if k in _c:
+        return _c[k]
+    w = _ttt_winner(b)
+    if w:
+        v = 1 if w == turn else -1
+    elif "." not in b:
+        v = 0
+    else:
+        o = "O" if turn == "X" else "X"
+        v = max(-_ttt_value(b[:i] + (turn,) + b[i + 1:], o) for i in range(9) if b[i] == ".")
+    _c[k] = v
+    return v
+
+
+def gen_tictactoe(rng):
+    while True:
+        b, turn = ["."] * 9, "X"
+        for _ in range(rng.randint(0, 7)):
+            b[rng.choice([i for i in range(9) if b[i] == "."])] = turn
+            turn = "O" if turn == "X" else "X"
+            if _ttt_winner(b) or "." not in b:
+                break
+        if _ttt_winner(b) or "." not in b:
+            continue
+        bt, o = tuple(b), ("O" if turn == "X" else "X")
+        free = [i for i in range(9) if b[i] == "."]
+        vals = [-_ttt_value(bt[:i] + (turn,) + bt[i + 1:], o) for i in free]
+        best = max(vals)
+        board = "\n".join(" ".join(b[r * 3:r * 3 + 3]) for r in range(3))
+        state = ("Game: tic-tac-toe on a 3x3 grid. Players alternate placing their mark in an empty cell; three in a row (row, column or diagonal) wins.\n"
+                 f"You are {turn} and it is your move. Cells are named r<row>c<col> (row 1 = top, column 1 = left).\nBoard:\n{board}")
+        return state, "Which cell gives the best result against perfect play?", [f"r{i // 3 + 1}c{i % 3 + 1}" for i in free], [1.0 if v == best else 0.0 for v in vals]
+
+
+def gen_nim(rng):
+    while True:
+        piles = [rng.randint(1, 7) for _ in range(rng.randint(2, 4))]
+        x = 0
+        for p in piles:
+            x ^= p
+        moves = [(i, k) for i, p in enumerate(piles) for k in range(1, p + 1)]
+        win = [(x ^ piles[i] ^ (piles[i] - k)) == 0 for i, k in moves]
+        if not any(win) and rng.random() > 0.15:
+            continue  # lost positions teach "no good move": keep a few, with a flat target
+        state = ("Game: Nim. There are several piles of objects. On your turn take one or more objects from exactly one pile. "
+                 f"Whoever takes the last object wins.\nPile sizes: {', '.join(f'pile {i + 1} = {p}' for i, p in enumerate(piles))}.\nIt is your move.")
+        tgt = [1.0 if w else 0.0 for w in win] if any(win) else [1.0] * len(moves)
+        return state, "Which move gives the best chance of winning?", [f"pile {i + 1}: take {k}" for i, k in moves], tgt
+
+
+_BJ_P = {**{c: 1 / 13 for c in range(2, 10)}, 10: 4 / 13, 11: 1 / 13}  # infinite deck, ace counted as 11 first
+
+
+def _bj_add(total, soft, card):
+    total += card
+    soft += card == 11
+    while total > 21 and soft:
+        total, soft = total - 10, soft - 1
+    return total, soft
+
+
+def _bj_dealer(total, soft, _c={}):  # dealer draws to 17, stands on all 17s -> {final value (22 = bust): prob}
+    k = (total, soft)
+    if k not in _c:
+        if total >= 17:
+            _c[k] = {(22 if total > 21 else total): 1.0}
+        else:
+            out = {}
+            for c, p in _BJ_P.items():
+                for v, q in _bj_dealer(*_bj_add(total, soft, c)).items():
+                    out[v] = out.get(v, 0) + p * q
+            _c[k] = out
+    return _c[k]
+
+
+def _bj_stand(total, up):
+    return sum(p * (1 if (v == 22 or total > v) else (-1 if total < v else 0)) for v, p in _bj_dealer(up, int(up == 11)).items())
+
+
+def _bj_hit(total, soft, up, _c={}):
+    k = (total, soft, up)
+    if k not in _c:
+        ev = 0.0
+        for c, p in _BJ_P.items():
+            t, s = _bj_add(total, soft, c)
+            ev += p * (-1 if t > 21 else max(_bj_stand(t, up), _bj_hit(t, s, up)))
+        _c[k] = ev
+    return _c[k]
+
+
+def _bj_double(total, soft, up):
+    return sum(p * (-2 if _bj_add(total, soft, c)[0] > 21 else 2 * _bj_stand(_bj_add(total, soft, c)[0], up)) for c, p in _BJ_P.items())
+
+
+def bj_evs(total, soft, up, can_double):
+    evs = {"stand": _bj_stand(total, up), "hit": _bj_hit(total, soft, up)}
+    if can_double:
+        evs["double"] = _bj_double(total, soft, up)
+    return evs
+
+
+def gen_blackjack(rng):
+    cards, w = list(_BJ_P), list(_BJ_P.values())
+    nm = lambda c: "Ace" if c == 11 else str(c)  # noqa: E731
+    while True:
+        hand = rng.choices(cards, w, k=2)
+        if rng.random() < 0.35:
+            hand.append(rng.choices(cards, w)[0])
+        t, s = 0, 0
+        for c in hand:
+            t, s = _bj_add(t, s, c)
+        if t >= 21:
+            continue
+        up = rng.choices(cards, w)[0]
+        evs = bj_evs(t, s, up, len(hand) == 2)
+        acts = list(evs)
+        z = [math.exp(evs[x] / 0.04) for x in acts]
+        state = ("Game: Blackjack, infinite deck. The dealer draws to 17 and stands on every 17 (including soft 17). No splitting, no special blackjack payout, "
+                 "ties push. You may Hit, Stand, or Double (only with your first two cards: you get exactly one more card, then stand, and the bet is doubled).\n"
+                 f"Your hand: {', '.join(nm(c) for c in hand)} ({'soft' if s else 'hard'} {t}). Dealer shows: {nm(up)}.")
+        return state, "Which action has the best expected result?", acts, [x / sum(z) for x in z]
+
+
+def gen_maze(rng):
+    mv = {"up": (-1, 0), "down": (1, 0), "left": (0, -1), "right": (0, 1)}
+    while True:
+        H, W = rng.randint(4, 6), rng.randint(4, 6)
+        g = [["#" if rng.random() < 0.22 else "." for _ in range(W)] for _ in range(H)]
+        P, G = rng.sample([(r, c) for r in range(H) for c in range(W)], 2)
+        g[P[0]][P[1]] = g[G[0]][G[1]] = "."
+        dist, q = {G: 0}, [G]
+        for r, c in q:
+            for dr, dc in mv.values():
+                n = (r + dr, c + dc)
+                if 0 <= n[0] < H and 0 <= n[1] < W and g[n[0]][n[1]] != "#" and n not in dist:
+                    dist[n] = dist[(r, c)] + 1
+                    q.append(n)
+        if P not in dist or dist[P] < 2:
+            continue
+        legal = [m for m, (dr, dc) in mv.items() if 0 <= P[0] + dr < H and 0 <= P[1] + dc < W and g[P[0] + dr][P[1] + dc] != "#"]
+        if len(legal) < 2:
+            continue
+        good = [dist.get((P[0] + mv[m][0], P[1] + mv[m][1]), 99) == dist[P] - 1 for m in legal]
+        g[P[0]][P[1]], g[G[0]][G[1]] = "P", "G"
+        state = ("Game: grid maze. You are P and must reach G. Each move steps one cell up, down, left or right. # is a wall; you cannot leave the grid.\n"
+                 "Map (top row first):\n" + "\n".join("".join(row) for row in g) + "\nIt is your move.")
+        return state, "Which move is on a shortest path to G?", legal, [1.0 if x else 0.0 for x in good]
+
+
+def gen_rps(rng):
+    beats = {"rock": "paper", "paper": "scissors", "scissors": "rock"}  # beats[x] = the move that beats x
+    mvs = list(beats)
+    kind = rng.choice(["const", "alt", "cycle3", "random"])
+    n = rng.randint(6, 9)
+    if kind == "random":
+        hist, tgt = [rng.choice(mvs) for _ in range(n)], [1.0, 1.0, 1.0]
+    else:
+        pat = {"const": [rng.choice(mvs)], "alt": rng.sample(mvs, 2), "cycle3": rng.sample(mvs, 3)}[kind]
+        off = rng.randint(0, len(pat) - 1)
+        hist = [pat[(off + i) % len(pat)] for i in range(n)]
+        nxt = pat[(off + n) % len(pat)]
+        tgt = [1.0 if m == beats[nxt] else 0.0 for m in mvs]
+    state = ("Game: rock-paper-scissors against an opponent that may follow a pattern. Rock beats scissors, scissors beats paper, paper beats rock.\n"
+             f"The opponent's previous moves, oldest first: {', '.join(hist)}.")
+    return state, "Which move should you play next to maximise your chance of winning?", mvs, tgt
+
+
+GAMES = {"tictactoe": gen_tictactoe, "nim": gen_nim, "blackjack": gen_blackjack, "maze": gen_maze, "rps": gen_rps}
+
+
+def cmd_gen_games(a):
+    rng = random.Random(a.seed)
+    con = db_connect(a.db)
+    n = 0
+    for g in a.games:
+        c = 0
+        for _ in range(a.n * 20):
+            if c >= a.n:
+                break
+            state, q, opts, tgt = GAMES[g](rng)
+            c += add_example(con, state, [{"type": "choice", "text": q, "options": opts, "target": tgt}], f"game:{g}", a.val_pct, group=state)
+        n += c
+        print(f"{g}: {c} positions")
+    con.commit()
+    print("generated", n, "game questions (labels from exact solvers)")
+
+
+def cmd_import_chess(a):
+    """Lichess/chess-puzzles (CC0): FEN is the position BEFORE the opponent's move; Moves[0] is that move, Moves[1] starts the solution."""
+    import chess
+    from datasets import load_dataset
+    ds = load_dataset(a.dataset, split=a.split)
+    ds = ds.filter(lambda r: a.min_rating <= r["Rating"] <= a.max_rating).shuffle(seed=a.seed).select(range(min(a.limit, len(ds))))
+    con = db_connect(a.db)
+    rng = random.Random(a.seed)
+    n = 0
+    for r in ds:
+        mv = r["Moves"].split()
+        b = chess.Board(r["FEN"])
+        last = b.san(chess.Move.from_uci(mv[0]))
+        b.push_uci(mv[0])
+        for i in range(1, min(len(mv), 2 * a.max_steps), 2):
+            gold = b.san(chess.Move.from_uci(mv[i]))
+            sans = [b.san(m) for m in b.legal_moves]
+            if len(sans) > a.max_options:
+                sans = [gold] + rng.sample([x for x in sans if x != gold], a.max_options - 1)
+            rng.shuffle(sans)
+            side = "White" if b.turn else "Black"
+            state = (f"Game: chess. You play {side} and it is your move. The opponent just played {last}. This position contains a strong tactic.\n"
+                     f"FEN: {b.fen()}\nBoard (rank 8 at the top; uppercase = White, lowercase = Black, . = empty):\n{b}")
+            n += add_example(con, state, [{"type": "choice", "text": "Which move is best?", "options": sans, "label": gold}], f"chess:{a.dataset.split('/')[-1]}", a.val_pct, group=r["PuzzleId"])
+            if i + 1 >= len(mv):
+                break
+            b.push_uci(mv[i])
+            last = b.san(chess.Move.from_uci(mv[i + 1]))
+            b.push_uci(mv[i + 1])
+    con.commit()
+    print(f"imported {n} chess decisions from {a.dataset}")
+
+
 def cmd_stats(a):
     con = db_connect(a.db)
     for r in con.execute("SELECT e.split, q.type, q.target IS NOT NULL AS labelled, COUNT(*) n FROM questions q "
@@ -766,6 +1110,27 @@ def load_ckpt(ckpt, device, dtype=None):
 
 def cmd_train(a):
     from transformers import AutoTokenizer
+    saved = None
+    if a.resume:  # continue a paused run: the saved settings win, only --out/--db come from the command line
+        rp = os.path.join(a.out, "resume.pt")
+        if not os.path.exists(rp):
+            sys.exit(f"nothing to resume in {a.out} (no resume.pt)")
+        saved = torch.load(rp, map_location="cpu", weights_only=False)
+        a = argparse.Namespace(**{**saved["args"], "resume": True, "out": a.out, "db": a.db})
+        print(f"resuming {a.out} from step {saved['step']}")
+    os.makedirs(a.out, exist_ok=True)
+    stop_file = os.path.join(a.out, "STOP")  # the UI's Pause button drops this file (works on Windows too)
+    if os.path.exists(stop_file):
+        os.remove(stop_file)
+    stop = {"flag": False}
+
+    def on_sigint(*_):
+        if stop["flag"]:
+            raise KeyboardInterrupt
+        stop["flag"] = True
+        print("Ctrl+C: pausing at the next step (press again to abort)", flush=True)
+
+    signal.signal(signal.SIGINT, on_sigint)
     torch.manual_seed(a.seed)
     rng = random.Random(a.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -841,15 +1206,38 @@ def cmd_train(a):
     cfg = {"base": a.base, "lora_r": a.lora_r, "max_len": a.max_len, "dtype": a.dtype, "hidden": model.score[0].in_features,
            "trained_with_unsloth": use_unsloth}
 
-    best, best_loss, step = None, 1e9, 0
-    t0, tokens, run_loss = time.time(), 0, []
-    for ep in range(a.epochs):
+    best, best_loss, step, ep0, start_bi, el_prev = None, 1e9, 0, 0, 0, 0.0
+    if saved:
+        if saved["n_train"] != len(train) or saved["total"] != total:
+            sys.exit("the training data or settings changed since the pause: cannot resume. Delete resume.pt to start over.")
+        model.load_state_dict(saved["trainable"], strict=False)
+        opt.load_state_dict(saved["opt"])
+        sched.load_state_dict(saved["sched"])
+        step, ep0, start_bi, best, best_loss, el_prev = saved["step"], saved["epoch"], saved["bi"], saved["best"], saved["best_loss"], saved["elapsed"]
+        rng.setstate(saved["rng"])
+        torch.set_rng_state(saved["torch_rng"])
+    t0, tokens, run_loss, step0 = time.time(), 0, [], step
+    rp = os.path.join(a.out, "resume.pt")
+
+    def save_resume():  # atomic: a crash during the write never corrupts the previous save
+        st = {"args": {k: v for k, v in vars(a).items() if k != "fn"}, "trainable": trainable_state(model), "opt": opt.state_dict(),
+              "sched": sched.state_dict(), "step": step, "epoch": ep, "bi": bi + 1, "best": best, "best_loss": best_loss,
+              "rng": rng.getstate(), "torch_rng": torch.get_rng_state(), "n_train": len(train), "total": total,
+              "elapsed": el_prev + time.time() - t0}
+        torch.save(st, rp + ".tmp")
+        os.replace(rp + ".tmp", rp)
+        json.dump({"step": step, "total": total, "epoch": ep, "saved_at": time.time()}, open(os.path.join(a.out, "resume_info.json"), "w"))
+
+    for ep in range(ep0, a.epochs):
+        er = random.Random(a.seed * 1000 + ep)  # per-epoch order is reproducible, so a resume can skip what was already done
         order = list(range(len(train)))
-        rng.shuffle(order)
+        er.shuffle(order)
         batches = make_batches(order)
-        rng.shuffle(batches)
+        er.shuffle(batches)
         model.train()
         for bi, idx in enumerate(batches):
+            if ep == ep0 and bi < start_bi:
+                continue
             batch = [augment(train[i]) for i in idx]
             ids, mask = collate(batch, pad_id, device)
             zs = model(ids, mask, batch)
@@ -862,10 +1250,10 @@ def cmd_train(a):
                 opt.step(); sched.step(); opt.zero_grad(set_to_none=True)
                 step += 1
                 if step % max(1, min(10, total // 50)) == 0 or step == total:
-                    el = time.time() - t0
+                    el = time.time() - t0  # this session only, so the ETA stays honest after a resume
                     hms = lambda x: f"{int(x // 3600):02d}:{int(x % 3600 // 60):02d}:{int(x % 60):02d}"  # noqa: E731
                     print(f"ep {ep} step {step}/{total} loss {sum(run_loss) / max(1, len(run_loss)):.4f} "
-                          f"{tokens / el:.0f} tok/s ETA {hms(el / step * (total - step))} elapsed {hms(el)}")
+                          f"{tokens / max(el, 1e-9):.0f} tok/s ETA {hms(el / (step - step0) * (total - step))} elapsed {hms(el_prev + el)}", flush=True)
                     run_loss = []
                 if step % a.eval_every == 0 or step == total:
                     recs = records_for(model, val, pad_id, device, a.bs * 2)
@@ -874,6 +1262,14 @@ def cmd_train(a):
                     if vl < best_loss:
                         best_loss, best = vl, trainable_state(model)
                     model.train()
+                pause = os.path.exists(stop_file) or stop["flag"]
+                if step < total and (pause or (a.save_every and step % a.save_every == 0)):
+                    save_resume()
+                    if pause:
+                        if os.path.exists(stop_file):
+                            os.remove(stop_file)
+                        print(f"PAUSED at step {step}/{total}. Continue later with: train --resume --out {a.out}", flush=True)
+                        sys.exit(75)
     if best:
         model.load_state_dict(best, strict=False)
     recs = records_for(model, val, pad_id, device, a.bs * 2)
@@ -894,6 +1290,9 @@ def cmd_train(a):
         mets["transfer"] = metrics(records_for(model, transfer, pad_id, device, a.bs * 2), {})  # heads already calibrated
         show("TRANSFER (held-out sources, never trained)", mets["transfer"])
     json.dump(mets, open(os.path.join(a.out, "metrics.json"), "w"), indent=2)
+    for f in ("resume.pt", "resume_info.json", "STOP"):  # finished: nothing left to resume
+        if os.path.exists(os.path.join(a.out, f)):
+            os.remove(os.path.join(a.out, f))
     print("saved ->", a.out)
 
 
@@ -1316,6 +1715,24 @@ def main():
     p = P("stats", cmd_stats); p.add_argument("--db", default="jev.db")
     p = P("add", cmd_add)
     p.add_argument("--db", default="jev.db"); p.add_argument("files", nargs="+"); p.add_argument("--val-pct", type=int, default=8)
+    p = P("import-router", cmd_import_router)
+    p.add_argument("--db", default="jev.db"); p.add_argument("--dataset", default="ParisNeo/lollms_smart_router_dataset"); p.add_argument("--split", default="train")
+    p.add_argument("--prompt-col", default="task_prompt"); p.add_argument("--solution-col", default="task_solution")
+    p.add_argument("--variants", type=int, default=2, help="extra rosters per prompt (drop 1-2 wrong models, reshuffle)")
+    p.add_argument("--smooth", type=float, default=0.05, help="label smoothing: the source labels are noisy"); p.add_argument("--seed", type=int, default=0); p.add_argument("--val-pct", type=int, default=8)
+    p = P("synth-router", cmd_synth_router)
+    p.add_argument("--db", default="jev.db"); p.add_argument("--n", type=int, default=100, help="teacher calls (6 prompts each)"); p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--seed", type=int, default=0); p.add_argument("--val-pct", type=int, default=8)
+    p.add_argument("--trust-intended", action="store_true", help="use the teacher's own 'best' as label instead of leaving it for distill")
+    p.add_argument("--teacher-binding"); p.add_argument("--teacher-host"); p.add_argument("--teacher-model"); p.add_argument("--teacher-key"); p.add_argument("--teacher-profile")
+    p = P("gen-games", cmd_gen_games)
+    p.add_argument("--db", default="jev.db"); p.add_argument("--games", nargs="+", choices=list(GAMES), default=list(GAMES))
+    p.add_argument("--n", type=int, default=300, help="positions per game"); p.add_argument("--seed", type=int, default=0); p.add_argument("--val-pct", type=int, default=8)
+    p = P("import-chess", cmd_import_chess)
+    p.add_argument("--db", default="jev.db"); p.add_argument("--dataset", default="Lichess/chess-puzzles"); p.add_argument("--split", default="train")
+    p.add_argument("--limit", type=int, default=2000, help="puzzles"); p.add_argument("--min-rating", type=int, default=0); p.add_argument("--max-rating", type=int, default=3500)
+    p.add_argument("--max-steps", type=int, default=2, help="solution moves per puzzle to turn into questions"); p.add_argument("--max-options", type=int, default=30)
+    p.add_argument("--seed", type=int, default=0); p.add_argument("--val-pct", type=int, default=8)
     p = P("import-jev", cmd_import_jev)
     p.add_argument("--db", default="jev.db"); p.add_argument("--dataset", required=True)
     p.add_argument("--splits", nargs="+", default=["train", "validation", "test"]); p.add_argument("--limit", type=int, default=0)
@@ -1355,6 +1772,8 @@ def main():
     p.add_argument("--unsloth", action=argparse.BooleanOptionalAction, default=True,
                    help="Unsloth loader + LoRA + checkpointing (default on; CUDA only; auto-falls back to plain HF+PEFT)")
     p.add_argument("--eval-every", type=int, default=100); p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--resume", action="store_true", help="continue a paused run from <out>/resume.pt (settings are read from the save)")
+    p.add_argument("--save-every", type=int, default=50, help="optimizer steps between resume points (0 = only when paused)")
     p.add_argument("--shuffle-options", action=argparse.BooleanOptionalAction, default=True, help="reshuffle choice options every step")
     p.add_argument("--reject-prob", type=float, default=0.05, help="chance of removing the right option and adding 'None of the above'")
     p.add_argument("--holdout-source", nargs="+", help="source substrings (e.g. cls:ag_news) kept out of training and reported as a transfer test")

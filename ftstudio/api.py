@@ -1,10 +1,11 @@
 import asyncio
+import base64
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import Response, FileResponse
 from pydantic import BaseModel
 
 from . import config, db, doctor, gguf_catalog, known_datasets, library, models, presets
@@ -34,6 +35,25 @@ class JobCreate(BaseModel):
 @app.get("/", include_in_schema=False)
 def root():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    static_dir = Path(__file__).parent / "static"
+    for filename in ("favicon.ico", "favicon.png"):
+        file_path = static_dir / filename
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+    # Fallback: 1x1 completely transparent PNG
+    tiny_png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwAEhgGA" 
+        "WjMl9wAAAABJRU5ErkJggg=="
+    )
+    return Response(
+        content=tiny_png,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/gguf")
