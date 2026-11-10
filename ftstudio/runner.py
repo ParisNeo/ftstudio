@@ -14,6 +14,21 @@ POLL = 1.0
 PKG_PARENT = str(Path(__file__).resolve().parents[1])
 
 
+def _sync_progress(jid: str, progress_file: Path, last_synced: int) -> int:
+    """Mirror a worker's progress.json into the DB. Returns the highest epoch synced."""
+    if not progress_file.exists():
+        return last_synced
+    try:
+        data = json.loads(progress_file.read_text())
+    except (OSError, ValueError):
+        return last_synced
+    epoch = int(data.get("last_epoch") or 0)
+    if epoch > last_synced:
+        db.update_checkpoint(jid, epoch, data.get("checkpoint"))
+        return epoch
+    return last_synced
+
+
 def kill_tree(proc: subprocess.Popen):
     if proc.poll() is not None:
         return
@@ -51,9 +66,20 @@ class Runner(threading.Thread):
         run_dir = config.runs_dir() / jid
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "params.json").write_text(json.dumps(job["params"], indent=2))
+        # Hand the worker its resume pointer via file (workers never touch SQLite directly).
+        resume_ckpt = job.get("checkpoint")
+        resume_epoch = int(job.get("last_epoch") or 0)
+        (run_dir / "resume.json").write_text(
+            json.dumps({"checkpoint": resume_ckpt, "last_epoch": resume_epoch})
+        )
         cmd = [sys.executable, "-u", "-m", f"ftstudio.workers.{job['kind']}", str(run_dir)]
         env = {**os.environ, "PYTHONPATH": PKG_PARENT + os.pathsep + os.environ.get("PYTHONPATH", "")}
+        if resume_ckpt:
+            env["FTSTUDIO_RESUME_CKPT"] = str(resume_ckpt)
+            env["FTSTUDIO_RESUME_EPOCH"] = str(resume_epoch)
         kw = {} if os.name == "nt" else {"start_new_session": True}
+        progress_file = run_dir / "progress.json"
+        last_synced = resume_epoch
         outcome = None
         with open(run_dir / "log.txt", "ab") as log:
             proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env, **kw)
@@ -67,11 +93,19 @@ class Runner(threading.Thread):
                     kill_tree(proc)
                     outcome = "cancelled"
                     break
+                last_synced = _sync_progress(jid, progress_file, last_synced)
                 self.stop_event.wait(0.3)
+        # Pick up any epoch the worker flushed just before dying.
+        last_synced = _sync_progress(jid, progress_file, last_synced)
+
         if outcome == "cancelled":
             db.finish(jid, "cancelled")
         elif outcome == "interrupted":
-            db.finish(jid, "failed", error="interrupted by shutdown")
+            j = db.get_job(jid)
+            if j and j.get("resumable"):
+                db.finish(jid, "paused")
+            else:
+                db.finish(jid, "failed", error="interrupted by shutdown")
         elif proc.returncode == 0:
             rf = run_dir / "result.json"
             db.finish(jid, "succeeded", result=json.loads(rf.read_text()) if rf.exists() else None)

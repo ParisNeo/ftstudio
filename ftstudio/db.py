@@ -1,5 +1,7 @@
 """SQLite job table. One row per job; status machine:
 queued -> running -> succeeded | failed | cancelled   (running -> cancelling -> cancelled)
+Resumable jobs additionally cycle running -> paused -> queued (resume) so a full app restart
+keeps training progress: every completed epoch is checkpointed and recorded here.
 """
 import json
 import sqlite3
@@ -20,6 +22,13 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, created);
 """
 
+# Idempotent additive migrations: name -> column DDL.
+MIGRATIONS = (
+    ("resumable", "ALTER TABLE jobs ADD COLUMN resumable INTEGER DEFAULT 0"),
+    ("checkpoint", "ALTER TABLE jobs ADD COLUMN checkpoint TEXT"),
+    ("last_epoch", "ALTER TABLE jobs ADD COLUMN last_epoch INTEGER DEFAULT 0"),
+)
+
 
 @contextmanager
 def conn():
@@ -32,9 +41,17 @@ def conn():
         c.close()
 
 
+def _migrate(c):
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(jobs)").fetchall()}
+    for name, ddl in MIGRATIONS:
+        if name not in cols:
+            c.execute(ddl)
+
+
 def init():
     with conn() as c:
         c.executescript(SCHEMA)
+        _migrate(c)
 
 
 def _row(r):
@@ -88,6 +105,39 @@ def finish(jid: str, status: str, result=None, error=None):
         )
 
 
+def update_checkpoint(jid: str, epoch: int, ckpt_path):
+    """Record the last completed epoch's checkpoint. Implies the job is now resumable."""
+    with conn() as c:
+        c.execute(
+            "UPDATE jobs SET checkpoint=?, last_epoch=?, resumable=1 WHERE id=?",
+            (ckpt_path, int(epoch), jid),
+        )
+
+
+def requeue_resumable() -> int:
+    """Move resumable running/cancelling jobs AND any job left paused back to queued.
+    Returns the number of rows requeued."""
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE jobs SET status='queued', started=NULL, finished=NULL, error=NULL "
+            "WHERE (status IN ('running','cancelling') AND resumable=1) OR status='paused'"
+        )
+        return cur.rowcount
+
+
+def requeue(jid: str):
+    """Manually push a paused/failed/queued job back onto the queue (e.g. user hits resume)."""
+    with conn() as c:
+        r = c.execute("SELECT id FROM jobs WHERE id=?", (jid,)).fetchone()
+        if r is None:
+            return None
+        c.execute(
+            "UPDATE jobs SET status='queued', started=NULL, finished=NULL, error=NULL WHERE id=?",
+            (jid,),
+        )
+    return get_job(jid)
+
+
 def request_cancel(jid: str):
     """Returns the new status, or None if the job doesn't exist."""
     with conn() as c:
@@ -108,10 +158,12 @@ def request_cancel(jid: str):
 
 
 def recover():
-    """Jobs left running by a crash can't be resumed: mark them failed."""
+    """On startup: requeue resumable/paused jobs so training continues, then fail the rest."""
+    requeued = requeue_resumable()
     with conn() as c:
         c.execute(
             "UPDATE jobs SET status='failed', error='interrupted by restart', finished=? "
             "WHERE status IN ('running','cancelling')",
             (time.time(),),
         )
+    return requeued

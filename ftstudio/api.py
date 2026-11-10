@@ -139,6 +139,19 @@ def cancel(jid: str):
     return {"status": status}
 
 
+@app.post("/jobs/{jid}/resume")
+def resume(jid: str):
+    job = db.get_job(jid)
+    if job is None:
+        raise HTTPException(404, "no such job")
+    if not job.get("resumable") or not job.get("checkpoint"):
+        raise HTTPException(409, "job is not resumable")
+    updated = db.requeue(jid)
+    if updated is None:
+        raise HTTPException(409, "job is not resumable")
+    return updated
+
+
 @app.get("/jobs/{jid}/log")
 def get_log(jid: str, offset: int = 0):
     path = config.runs_dir() / jid / "log.txt"

@@ -1,5 +1,6 @@
 """Generic LoRA fine-tuning with transformers + PEFT: NVIDIA (CUDA), AMD (ROCm), Intel (XPU), Apple (MPS), or CPU.
 Slower and hungrier than Unsloth, but runs wherever PyTorch does. Loss on assistant tokens only (data/masking.py)."""
+import os
 import time
 
 from ..data.masking import tokenize_example
@@ -91,6 +92,23 @@ def run_peft(run, cfg, ds, inst, resp, rep):
 
     metrics = []
 
+    # Resume state: env override first, then the runner-written sidecar resume.json.
+    resume_ckpt = None
+    env_ck = os.environ.get("FTSTUDIO_RESUME_CKPT") or ""
+    if env_ck and os.path.isdir(env_ck):
+        resume_ckpt = env_ck
+    if resume_ckpt is None:
+        rj = run / "resume.json"
+        if rj.exists():
+            try:
+                rj_data = json.loads(rj.read_text())
+                ck = (rj_data or {}).get("checkpoint")
+                if ck and os.path.isdir(ck):
+                    resume_ckpt = ck
+            except Exception:
+                pass
+    print(f"peft: resume_from_checkpoint={resume_ckpt}", flush=True)
+
     class Log(TrainerCallback):
         def on_log(self, args, state, control, logs=None, **k):
             if logs:
@@ -98,17 +116,31 @@ def run_peft(run, cfg, ds, inst, resp, rep):
                 metrics.append(rec)
                 print("METRIC " + json.dumps(rec), flush=True)
 
+    class SaveEpoch(TrainerCallback):
+        def on_epoch_end(self, args, state, control, **k):
+            ckpt = state.best_model_checkpoint or str(run / "ckpt" / f"checkpoint-{state.global_step}")
+            payload = {"last_epoch": int(state.epoch or 0), "checkpoint": ckpt}
+            try:
+                p = run / "progress.json"
+                with open(p, "w") as f:
+                    json.dump(payload, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+            except Exception as e:
+                print(f"peft: failed to write progress.json: {e!r}", flush=True)
+
     args = make_args(TrainingArguments, output_dir=str(run / "ckpt"), per_device_train_batch_size=cfg["batch_size"],
                      gradient_accumulation_steps=cfg["grad_accum"], num_train_epochs=cfg["epochs"], max_steps=cfg["max_steps"] or -1,
                      learning_rate=cfg["learning_rate"], warmup_ratio=0.03, lr_scheduler_type="linear", logging_steps=5,
-                     bf16=dtype_name == "bf16", fp16=dtype_name == "fp16", save_strategy="no", report_to=[],
+                     bf16=dtype_name == "bf16", fp16=dtype_name == "fp16", save_strategy="epoch", save_total_limit=2, report_to=[],
                      remove_unused_columns=False, seed=cfg["seed"], use_cpu=accel == "cpu", optim="adamw_torch",
                      **({"eval_strategy": "steps", "eval_steps": cfg["eval_steps"]} if val else {}))
-    trainer = Trainer(model=model, args=args, train_dataset=train, eval_dataset=val or None, data_collator=collate, callbacks=[Log()])
+    trainer = Trainer(model=model, args=args, train_dataset=train, eval_dataset=val or None, data_collator=collate, callbacks=[Log(), SaveEpoch()])
     t0 = time.time()
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_ckpt)
     secs = time.time() - t0
     model.save_pretrained(str(run / "adapter"))
     tok.save_pretrained(str(run / "adapter"))
     peak = round(torch.cuda.max_memory_reserved() / 1e9, 2) if accel in ("cuda", "rocm") else None
-    return write_train_result(run, cfg, ds, metrics, secs, peak, "peft", accel, run / "adapter")
+    return write_train_result(run, cfg, ds, metrics, secs, peak, "peft", accel, run / "adapter",
+                              extra={"resumed_from": resume_ckpt, "epochs_completed": int(trainer.state.epoch or 0)})

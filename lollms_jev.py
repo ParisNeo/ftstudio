@@ -51,6 +51,17 @@ except Exception as _e:  # data / teacher commands still work without a usable t
 
 MAX_LEVELS = 11
 TYPES = ("choice", "score", "yesno")
+_PROG = {}
+
+
+def prog(i, n, what=""):
+    """Progress for the UI, only when JEV_PROG is set: `@@PROG done total what`, about one line per percent."""
+    if not os.environ.get("JEV_PROG"):
+        return
+    pct = int(100 * i / max(1, n))
+    if _PROG.get(what) != pct or i >= n:
+        _PROG[what] = pct
+        print(f"@@PROG {i} {n} {what}", flush=True)
 
 # ----------------------------------------------------------------------------------------------
 # Database (SQLite: zero-ops, ACID, resumable; targets are soft distributions stored as JSON)
@@ -71,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_q_target ON questions(target IS NULL);
 
 
 def db_connect(path):
-    con = sqlite3.connect(path)
+    con = sqlite3.connect(path, timeout=300)  # concurrent jobs share a DB: wait for the other writer instead of failing after 5 s
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
@@ -246,7 +257,8 @@ Reply with JSON only: {{"state":"...","questions":[...]}}"""
 
     ok = 0
     with cf.ThreadPoolExecutor(a.workers) as ex:
-        for dom, j in ex.map(one, range(a.n)):
+        for k, (dom, j) in enumerate(ex.map(one, range(a.n)), 1):
+            prog(k, a.n, "synthesizing")
             try:
                 ok += bool(add_example(con, j["state"], j["questions"], f"synth:{dom}", a.val_pct))
             except Exception:  # noqa: BLE001
@@ -303,7 +315,8 @@ def cmd_distill(a):
 
     done = 0
     with cf.ThreadPoolExecutor(a.workers) as ex:
-        for qid, tgt, nv in ex.map(label, rows):
+        for k, (qid, tgt, nv) in enumerate(ex.map(label, rows), 1):
+            prog(k, len(rows), "distilling")
             if tgt is not None:
                 con.execute("UPDATE questions SET target=?, n_votes=? WHERE id=?", (json.dumps(tgt), nv, qid))
                 done += 1
@@ -342,8 +355,9 @@ def cmd_import_cls(a):
         names, to_idx = [str(u) for u in uniq], {u: i for i, u in enumerate(uniq)}
     yes = set(a.yes_labels)
     con = db_connect(a.db)
-    n = 0
-    for r in ds:
+    n = tried = 0
+    for k, r in enumerate(ds, 1):
+        prog(k, len(ds), "importing rows")
         cols = a.text_cols
         state = str(r[cols[0]]) if len(cols) == 1 else "\n".join(f"{c}: {r[c]}" for c in cols)
         lab, qtext = r[col], (str(r[a.question_col]) if a.question_col else a.question)
@@ -360,9 +374,10 @@ def cmd_import_cls(a):
                 continue  # unlabeled rows (-1)
             q = ({"type": "choice", "text": qtext, "options": names, "label": idx} if a.kind == "choice"
                  else {"type": "score", "text": qtext, "levels": len(names), "label": idx + 1})
+        tried += 1
         n += add_example(con, state, [q], f"cls:{a.dataset}", a.val_pct)
     con.commit()
-    print(f"imported {n} {a.kind} questions from {a.dataset}")
+    print(f"imported {n} {a.kind} questions from {a.dataset} ({tried - n} already in DB, {len(ds) - tried} skipped)")
 
 
 def cmd_import_jev(a):
@@ -379,7 +394,8 @@ def cmd_import_jev(a):
         ds = ds.shuffle(seed=a.seed).select(range(min(a.limit, len(ds))))
     con = db_connect(a.db)
     n = skipped = 0
-    for r in ds:
+    for k, r in enumerate(ds, 1):
+        prog(k, len(ds), "importing rows")
         if r.get("question_key") in a.skip_keys or r["primitive"] not in ("choice", "noul"):
             skipped += 1
             continue
@@ -406,7 +422,7 @@ def cmd_import_jev(a):
             j = [x / sum(j) for x in j] if sum(j) > 0 else g
             q = {"type": "choice", "text": text, "options": opts,
                  "target": {"gold": g, "jev": j, "mix": [(x + y) / 2 for x, y in zip(g, j)]}[a.target]}
-        n += add_example(con, sstr, [q], f"jev:{a.dataset.split('/')[-1]}", a.val_pct, group=group)
+        n += add_example(con, sstr, [q], f"jev:{a.dataset}", a.val_pct, group=group)
     con.commit()
     print(f"imported {n} questions from {a.dataset} (skipped {skipped}); target={a.target}")
 
@@ -455,7 +471,8 @@ def cmd_import_router(a):
     rng = random.Random(a.seed)
     con = db_connect(a.db)
     seen, n, skipped = set(), 0, 0
-    for r in ds:
+    for k, r in enumerate(ds, 1):
+        prog(k, len(ds), "importing rows")
         parsed = parse_router_row(r[a.prompt_col], r[a.solution_col])
         if not parsed:
             skipped += 1
@@ -477,7 +494,7 @@ def cmd_import_router(a):
             names = [m[0] for m in ro]
             idx = names.index(models[gold][0])
             q = {"type": "choice", "text": router_question(ro), "options": names, "target": smooth_target(len(names), idx, a.smooth)}
-            n += add_example(con, prompt, [q], f"router:{a.dataset.split('/')[-1]}", a.val_pct, group=prompt)
+            n += add_example(con, prompt, [q], f"router:{a.dataset}", a.val_pct, group=prompt)
     con.commit()
     print(f"imported {n} routing questions from {a.dataset} (skipped {skipped} rows: no model list / duplicate / unparsable)")
 
@@ -506,7 +523,8 @@ def cmd_synth_router(a):
 
     n = 0
     with cf.ThreadPoolExecutor(a.workers) as ex:
-        for j in ex.map(one, range(a.n)):
+        for k, j in enumerate(ex.map(one, range(a.n)), 1):
+            prog(k, a.n, "synthesizing")
             try:
                 models = [(m["name"], m["description"]) for m in j["models"]]
                 names = [m[0] for m in models]
@@ -731,7 +749,8 @@ def cmd_import_chess(a):
     con = db_connect(a.db)
     rng = random.Random(a.seed)
     n = 0
-    for r in ds:
+    for k, r in enumerate(ds, 1):
+        prog(k, len(ds), "importing puzzles")
         mv = r["Moves"].split()
         b = chess.Board(r["FEN"])
         last = b.san(chess.Move.from_uci(mv[0]))
@@ -745,7 +764,7 @@ def cmd_import_chess(a):
             side = "White" if b.turn else "Black"
             state = (f"Game: chess. You play {side} and it is your move. The opponent just played {last}. This position contains a strong tactic.\n"
                      f"FEN: {b.fen()}\nBoard (rank 8 at the top; uppercase = White, lowercase = Black, . = empty):\n{b}")
-            n += add_example(con, state, [{"type": "choice", "text": "Which move is best?", "options": sans, "label": gold}], f"chess:{a.dataset.split('/')[-1]}", a.val_pct, group=r["PuzzleId"])
+            n += add_example(con, state, [{"type": "choice", "text": "Which move is best?", "options": sans, "label": gold}], f"chess:{a.dataset}", a.val_pct, group=r["PuzzleId"])
             if i + 1 >= len(mv):
                 break
             b.push_uci(mv[i])
@@ -949,6 +968,7 @@ def run_inference(model, items, pad_id, device, bs=16):
         ids, mask = collate(batch, pad_id, device)
         for i, z in zip(idx, model(ids, mask, batch)):
             out[i] = z.float().cpu()
+        prog(min(s + bs, len(order)), len(order), "inference")
     return out
 
 
@@ -1200,6 +1220,7 @@ def cmd_train(a):
 
     steps_per_epoch = math.ceil(len(make_batches(list(range(len(train))))) / a.accum)
     total = max(1, steps_per_epoch * a.epochs)
+    print(f"plan: {a.epochs} epochs, {steps_per_epoch} steps/epoch, {total} total steps", flush=True)
     warm = max(1, int(0.03 * total))
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: (s + 1) / warm if s < warm else 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * (s - warm) / max(1, total - warm))))
@@ -1253,7 +1274,7 @@ def cmd_train(a):
                     el = time.time() - t0  # this session only, so the ETA stays honest after a resume
                     hms = lambda x: f"{int(x // 3600):02d}:{int(x % 3600 // 60):02d}:{int(x % 60):02d}"  # noqa: E731
                     print(f"ep {ep} step {step}/{total} loss {sum(run_loss) / max(1, len(run_loss)):.4f} "
-                          f"{tokens / max(el, 1e-9):.0f} tok/s ETA {hms(el / (step - step0) * (total - step))} elapsed {hms(el_prev + el)}", flush=True)
+                          f"{tokens / max(el, 1e-9):.0f} tok/s ETA {hms(el / (step - step0) * (total - step))} elapsed {hms(el_prev + el)} lr {sched.get_last_lr()[0]:.2e}", flush=True)
                     run_loss = []
                 if step % a.eval_every == 0 or step == total:
                     recs = records_for(model, val, pad_id, device, a.bs * 2)
@@ -1301,7 +1322,8 @@ def baseline_records(lm, tok, items, device, max_len):
     """The UNMODIFIED base LM reads the answer off its own logits (option letters, Yes/No, digits). No training involved."""
     tid = lambda x: _enc(tok, " " + x)[-1]  # noqa: E731
     recs = []
-    for it in items:
+    for k, it in enumerate(items, 1):
+        prog(k, len(items), "frozen base")
         q, t = it["q"], it["q"]["type"]
         if t == "choice" and len(q["options"]) > 26:
             continue
@@ -1593,15 +1615,84 @@ def export_gguf(merged_dir, d, quant, llama_cpp, quantize_bin=None):
 
 
 def _size(path):
-    tot = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(path) for f in fs)
-    return f"{tot / 2**20:.0f} MB"
+    tot = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(path) for f in fs) if os.path.isdir(path) else os.path.getsize(path)
+    return f"{tot / 2**20:.1f} MB" if tot >= 2**20 else f"{tot / 1024:.0f} KB"
 
 
-def write_card(ck, repo):
+CREATORS = {"Qwen": "the Qwen team at Alibaba Cloud", "HuggingFaceTB": "the Hugging Face team", "google": "Google", "meta-llama": "Meta"}
+GENERATED = {"game": "Game positions generated by lollms_jev with exact solvers (tic-tac-toe, Nim, blackjack, mazes, rock-paper-scissors).",
+             "synth": "Synthetic examples written by a teacher model through lollms_client."}
+
+
+def split_sources(srcs):
+    """training sources -> (Hub dataset ids, generated-data notes, other names)."""
+    hf, gen, other = set(), set(), []
+    for x in srcs:
+        k, _, v = x.partition(":")
+        if k in ("cls", "jev", "router", "chess") and "/" in v:
+            hf.add(v)
+        elif k in GENERATED:
+            gen.add(GENERATED[k])
+        else:
+            other.append(x)
+    return sorted(hf), sorted(gen), other
+
+
+def hub_meta(base, dataset_ids, token, lookup=True):
+    """Licences straight from the Hub cards (best effort; the card says 'see the card' when a lookup fails)."""
+    out = {"base": {}, "ds": {}}
+    if not lookup:
+        return out
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi(token=token)
+    except Exception:  # noqa: BLE001
+        return out
+    try:
+        cd = api.model_info(base).card_data
+        out["base"] = {k: getattr(cd, k, None) for k in ("license", "license_name", "license_link")} if cd else {}
+    except Exception:  # noqa: BLE001
+        pass
+    for d in dataset_ids:
+        try:
+            lic = getattr(api.dataset_info(d).card_data, "license", None)
+            out["ds"][d] = ", ".join(lic) if isinstance(lic, (list, tuple)) else lic
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
+def _front(base, relation, tags, lic, datasets, pipeline=None):
+    y = ["---"] + ([f"base_model: {base}", f"base_model_relation: {relation}"] if base else []) + ["tags:"] + [f"- {t}" for t in tags]
+    if pipeline:
+        y.append(f"pipeline_tag: {pipeline}")
+    if lic.get("license"):
+        y.append(f"license: {lic['license']}")
+        if lic["license"] == "other":
+            y += [f"license_name: {lic[k]}" for k in ("license_name",) if lic.get(k)] + [f"license_link: {lic[k]}" for k in ("license_link",) if lic.get(k)]
+    if datasets:
+        y += ["datasets:"] + [f"- {d}" for d in datasets]
+    return "\n".join(y + ["---", ""])
+
+
+def build_cards(ck, repo, gguf_repo=None, lookup=True, token=None):
+    """-> (main card, gguf card or None). Credits the base model first, then data, tools and prior art."""
     cfg = json.load(open(os.path.join(ck, "config.json")))
     mp = os.path.join(ck, "metrics.json")
     m = json.load(open(mp)) if os.path.exists(mp) else {}
+    base, name = cfg["base"], repo.split("/")[-1]
+    hub = bool(re.fullmatch(r"[\w.-]+/[\w.-]+", base)) and not base.startswith((".", "/", "~")) and not os.path.isdir(base)  # a local folder is not a Hub repo
+    org = base.split("/")[0] if hub else ""
+    who = CREATORS.get(org, f"the `{org}` organisation" if org else "its authors")
+    blink = f"[`{base}`](https://huggingface.co/{base})" if hub else f"`{base}`"
+    hf, gen, other = split_sources(m.get("sources", []))
+    meta = hub_meta(base, hf, token, lookup and hub)
+    lic = meta["base"]
+    lic_txt = (f"The base model is released under **{lic['license']}**" + (f" ({lic['license_name']})" if lic.get("license_name") else "") + ", and this fine-tune inherits those terms."
+               if lic.get("license") else "This fine-tune inherits the licence of the base model: read its card before reuse.")
     have = {k: os.path.isdir(os.path.join(ck, k)) for k in ("merged", "onnx", "gguf")}
+    ds_lines = [f"- [{d}](https://huggingface.co/datasets/{d})" + (f", licence: {meta['ds'][d]}" if meta["ds"].get(d) else ", licence: see its card") for d in hf]
+    ds_lines += [f"- {g}" for g in gen] + [f"- {o} (user-supplied)" for o in other]
 
     def tbl(title, d):
         rows = "\n".join(f"| {t} | {v['n']} | {v['acc']:.3f} | {v['ece']:.3f} | {('%.3f' % v['auroc']) if 'auroc' in v else '-'} |" for t, v in d.items())
@@ -1613,8 +1704,9 @@ def write_card(ck, repo):
     if have["onnx"]:
         use.append(f"- ONNX (`onnx/`, {_size(os.path.join(ck, 'onnx'))}): download that folder, then `python lollms_jev.py predict --onnx onnx --input request.json` (`--onnx-file model.int8.onnx` for the int8 file if present)")
     if have["gguf"]:
-        use.append("- GGUF (`gguf/`): the backbone for llama.cpp. Run it with embeddings and `--pooling none` to get per-token hidden states, then apply "
-                   "`heads.safetensors` (choice / yesno / score heads, temperature already folded in). The glue code is not included.")
+        use.append(f"- GGUF: " + (f"see [{gguf_repo}](https://huggingface.co/{gguf_repo})." if gguf_repo else "`gguf/` holds the backbone for llama.cpp; the heads are in `heads.safetensors` beside it (details in that folder's notes)."))
+    results = (tbl("Held-out rows (same sources as training; calibrated)", m["val_calibrated"]) if "val_calibrated" in m else "No metrics were recorded.\n\n")
+    results += tbl("Transfer: sources never trained on", m["transfer"]) if "transfer" in m else "No transfer set was held out for this run.\n\n"
     bj, bench_md = os.path.join(ck, "bench.json"), ""
     if os.path.exists(bj):
         b = json.load(open(bj))
@@ -1622,23 +1714,26 @@ def write_card(ck, repo):
         for src, r in b["results"].items():
             for t, v in r["model"].items():
                 bv = (r.get("base") or {}).get(t)
-                rows.append(f"| {src.replace('cls:', '')} ({r['split']}) | {t} | {v['n']} | {v['acc']:.3f} | {('%.3f' % bv['acc']) if bv else '-'} | "
-                            f"{('%.3f' % v['auroc']) if 'auroc' in v else '-'} | {v['ece']:.3f} |")
-        bench_md = ("## Benchmarks\n\n| dataset (split) | type | n | this model | frozen base | AUROC | ECE |\n|---|---|---|---|---|---|---|\n"
-                    + "\n".join(rows) + f"\n\nOfficial held-out splits of datasets used in training (their train splits only), at most {b['limit']} rows each. "
-                    f"\"Frozen base\" is the unmodified `{b['base']}` answering from its own logits (option letters, Yes/No, digits) with no training, on the same rows. "
-                    "Accuracy uses a 0.5 cutoff for yes/no; ECE is for this model only (its temperature was fitted on our own validation rows, not on these).\n\n")
-    srcs = "\n".join(f"- {x}" for x in m.get("sources", [])) or "- (not recorded)"
+                rows.append(f"| {src.replace('cls:', '')} ({r['split']}) | {t} | {v['n']} | {v['acc']:.3f} | {('%.3f' % bv['acc']) if bv else '-'} | {('%.3f' % v['auroc']) if 'auroc' in v else '-'} | {v['ece']:.3f} |")
+        bench_md = ("## Benchmarks\n\n| dataset (split) | type | n | this model | frozen base | AUROC | ECE |\n|---|---|---|---|---|---|---|\n" + "\n".join(rows)
+                    + f"\n\nOfficial held-out splits of datasets used in training (their train splits only), at most {b['limit']} rows each. \"Frozen base\" is the unmodified `{b['base']}` "
+                    "answering from its own logits (option letters, Yes/No, digits) with no training, on the same rows. Accuracy uses a 0.5 cutoff for yes/no; ECE is for this model only "
+                    "(its temperature was fitted on our own validation rows, not on these).\n\n")
     r = m.get("recipe", {})
-    card = f"""---
-base_model: {cfg['base']}
-tags: [lollms-jev, decision-model, lora]
-pipeline_tag: text-classification
----
-# {repo.split('/')[-1]}
+    main = _front(base if hub else None, "finetune", ["lollms-jev", "decision-model", "lora"], lic, hf, "text-classification") + f"""# {name}
+
+> **Built on {blink} by {who}.** Its language ability is what this model runs on: this repository only adds LoRA adapters and small typed decision heads trained with `lollms_jev`. Please credit the base model and follow its licence.
 
 A small typed decision model: give it a state and typed questions (choice, yes/no, 1-K score) and it returns calibrated probabilities, not free text.
-Built with `lollms_jev.py`: `{cfg['base']}` with LoRA (r={cfg['lora_r']}) and typed heads. Not affiliated with TypeSafe AI or its Jev model.
+Not affiliated with TypeSafe AI or its Jev model.
+
+## Credits and licence
+- **Base model:** {blink} by {who}.
+- **Licence:** {lic_txt} The training datasets have their own terms (below): check both before reuse.
+- **Training data:**
+{chr(10).join(ds_lines) or '- (not recorded)'}
+- **Tooling:** `lollms_jev` training and export scripts, built around the LoLLMS ecosystem by ParisNeo ([lollms_client](https://github.com/ParisNeo/lollms_client) for teacher labelling); Unsloth and PEFT for LoRA; llama.cpp for GGUF conversion.
+- **Prior art:** the decision-model line of work around Jev (TypeSafe AI), Qwen3.5-4B-Jev-Judge and "LLM-as-Jev" (arXiv 2610.02076).
 
 ## Use
 {chr(10).join(use)}
@@ -1646,28 +1741,86 @@ Built with `lollms_jev.py`: `{cfg['base']}` with LoRA (r={cfg['lora_r']}) and ty
 `request.json`: `{{"state": "...", "questions": [{{"type": "choice", "text": "...", "options": ["a", "b"]}}, {{"type": "yesno", "text": "..."}}, {{"type": "score", "text": "...", "levels": 5}}]}}`
 
 ## Results
-""" + (tbl("Held-out rows (same sources as training; calibrated)", m["val_calibrated"]) if "val_calibrated" in m else "No metrics were recorded.\n\n") \
-        + (tbl("Transfer: sources never trained on", m["transfer"]) if "transfer" in m else "No transfer set was held out for this run.\n\n") + f"""
-Accuracy and ECE are measured against the dataset labels (gold or teacher) at a 0.5 cutoff for yes/no. Calibration temperatures are folded into the heads.
+{results}Accuracy and ECE are measured against the dataset labels (gold or teacher) at a 0.5 cutoff for yes/no. Calibration temperatures are folded into the heads.
 
 {bench_md}## Training
-LoRA r={r.get('lora_r')}, lr {r.get('lr')}, {r.get('epochs')} epoch(s), batch {r.get('batch')}, max length {r.get('max_len')}. Data sources:
-{srcs}
+LoRA r={r.get('lora_r')}, lr {r.get('lr')}, {r.get('epochs')} epoch(s), batch {r.get('batch')}, max length {r.get('max_len')}.
 
 ## Limits
-The licence of the base model (`{cfg['base']}`) carries over to this fine-tune, and each training dataset has its own terms: check both before reuse. Outputs are only as good as the labels of those sources. Scores for sources not listed above are untested.
+Outputs are only as good as the labels of the sources above; scores for sources not listed there are untested. Probabilities are calibrated on held-out rows of the training sources, not on your data: re-check on a sample of your own before relying on thresholds. Not for safety-critical decisions.
+
+## Citation
+```
+@misc{{{re.sub(r'[^a-z0-9]', '', name.lower())},
+  title  = {{{name}}},
+  author = {{{repo.split('/')[0]}}},
+  note   = {{Fine-tune of {base}; https://huggingface.co/{repo}}}
+}}
+```
 """
-    open(os.path.join(ck, "README.md"), "w", encoding="utf-8").write(card)
+    gcard = None
+    if gguf_repo and have["gguf"]:
+        files = sorted(f for f in os.listdir(os.path.join(ck, "gguf")) if f != "README.md")
+        ftab = "\n".join(f"| `{f}` | {_size(os.path.join(ck, 'gguf', f))} |" for f in files)
+        gcard = _front(repo, "quantized", ["gguf", "lollms-jev", "decision-model"], lic, hf) + f"""# {gguf_repo.split('/')[-1]}
+
+GGUF version of [`{repo}`](https://huggingface.co/{repo}), which is built on {blink} by {who}. Please credit the base model and follow its licence.
+
+## Files
+| file | size |
+|---|---|
+{ftab}
+
+## Use
+The `.gguf` file is the merged backbone (LoRA already folded in). The typed decision heads are NOT inside it: they are in `heads.safetensors` (choice, yes/no and score heads, calibration temperature already folded in), with `jev_config.json` describing them.
+Load the GGUF with embeddings enabled and pooling set to none (llama.cpp `--pooling none`) to get per-token hidden states, pool them at the readout positions described in [{repo}](https://huggingface.co/{repo}), then apply the heads. The glue code is not included. For ready-to-run inference use the main repository.
+
+## Credits and licence
+{lic_txt} See the main repository card for training data and their licences. GGUF conversion with llama.cpp.
+"""
+    return main, gcard
+
+
+def cmd_card(a):
+    main, g = build_cards(a.ckpt, a.repo, a.gguf_repo, not a.no_lookup, os.environ.get("HF_TOKEN") or None)
+    open(os.path.join(a.ckpt, "README.md"), "w", encoding="utf-8").write(main)
+    if g:
+        open(os.path.join(a.ckpt, "gguf", "README.md"), "w", encoding="utf-8").write(g)
+    print("cards written:", os.path.join(a.ckpt, "README.md"), "and gguf/README.md" if g else "")
 
 
 def cmd_publish(a):
+    """Upload the model repo and, optionally, a separate GGUF repo, each with a pre-crafted card that credits the base model."""
+    import fnmatch
+    ck, token = a.ckpt, os.environ.get("HF_TOKEN") or None
+    if a.gguf_repo and not os.path.isdir(os.path.join(ck, "gguf")):
+        sys.exit("--gguf-repo needs an exported GGUF: run export with --formats gguf first")
+    main, g = build_cards(ck, a.repo, a.gguf_repo, not a.no_lookup, token)
+    open(os.path.join(ck, "README.md"), "w", encoding="utf-8").write(open(a.card, encoding="utf-8").read() if a.card else main)
+    if g:
+        open(os.path.join(ck, "gguf", "README.md"), "w", encoding="utf-8").write(g)
+    ign = ["resume.pt", "resume_info.json", "STOP", "bench_specs.json", "README.custom.md", "*.tmp"] + (["gguf/*"] if a.gguf_repo else [])
+    plan = [(a.repo, ck, ign)] + ([(a.gguf_repo, os.path.join(ck, "gguf"), [])] if a.gguf_repo else [])
+    for repo, folder, ig in plan:
+        files = [os.path.relpath(os.path.join(r, f), folder).replace("\\", "/") for r, _, fs in os.walk(folder) for f in fs]
+        files = [f for f in files if not any(fnmatch.fnmatch(f, x) for x in ig)]
+        print(f"{'would upload' if a.dry_run else 'uploading'} to {repo}: {len(files)} files, " + ", ".join(sorted(f for f in files if f.count('/') == 0)[:8]))
+    if a.dry_run:
+        print("dry run: cards written, nothing uploaded")
+        return
     from huggingface_hub import HfApi
-    write_card(a.ckpt, a.repo)
-    api = HfApi(token=os.environ.get("HF_TOKEN") or None)  # token comes from the environment, never from argv
-    api.create_repo(a.repo, private=a.private, exist_ok=True)
-    api.upload_folder(folder_path=a.ckpt, repo_id=a.repo, commit_message="lollms-jev checkpoint")
+    api = HfApi(token=token)
+    try:
+        who = api.whoami()["name"]
+    except Exception as e:  # noqa: BLE001
+        sys.exit(f"not logged in to Hugging Face ({type(e).__name__}): enter a token or run `huggingface-cli login`")
+    print("logged in as", who)
+    for repo, folder, ig in plan:
+        api.create_repo(repo, private=a.private, exist_ok=True)
+        api.upload_folder(folder_path=folder, repo_id=repo, ignore_patterns=ig or None, commit_message="lollms-jev upload")
     api.upload_file(path_or_fileobj=os.path.abspath(__file__), path_in_repo="lollms_jev.py", repo_id=a.repo)
-    print("published: https://huggingface.co/" + a.repo)
+    for repo, _, _ in plan:
+        print("published: https://huggingface.co/" + repo)
 
 
 def cmd_export(a):
@@ -1791,6 +1944,12 @@ def main():
     p.add_argument("--source", nargs="+", help="only rows whose source contains one of these"); p.add_argument("--by-source", action="store_true")
     p = P("publish", cmd_publish)
     p.add_argument("--ckpt", required=True); p.add_argument("--repo", required=True, help="user/name"); p.add_argument("--private", action="store_true")
+    p.add_argument("--gguf-repo", help="publish the GGUF export as its own repo, e.g. user/name-GGUF (recommended)")
+    p.add_argument("--card", help="your own README.md for the main repo instead of the generated one")
+    p.add_argument("--dry-run", action="store_true", help="write the cards and list the uploads, upload nothing")
+    p.add_argument("--no-lookup", action="store_true", help="do not query the Hub for licences")
+    p = P("card", cmd_card)
+    p.add_argument("--ckpt", required=True); p.add_argument("--repo", required=True); p.add_argument("--gguf-repo"); p.add_argument("--no-lookup", action="store_true")
     p = P("export", cmd_export)
     p.add_argument("--ckpt", required=True); p.add_argument("--formats", nargs="+", choices=["merged", "onnx", "gguf"], required=True)
     p.add_argument("--quant", choices=["f16", "bf16", "q8_0", "q4_k_m", "q5_k_m", "q6_k"], default="q8_0", help="GGUF type; k-quants need llama-quantize")

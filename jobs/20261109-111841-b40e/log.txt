@@ -1,0 +1,235 @@
+=== Import MaziyarPanahi/Jev-RAG-Claim-Verification-130K
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+imported 0 questions from MaziyarPanahi/Jev-RAG-Claim-Verification-130K (skipped 44); target=gold
+=== Import MaziyarPanahi/Jev-Safety-Refusal-Decisions-150K
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+imported 0 questions from MaziyarPanahi/Jev-Safety-Refusal-Decisions-150K (skipped 0); target=gold
+=== Train LoLLMS-Jev (+ calibrate)
+W1109 11:19:00.259000 4060 venv\Lib\site-packages\torch\distributed\elastic\multiprocessing\redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+Unsloth: torchao==0.18.0 does not support torch==2.7.1+cu118 (module 'torch' has no attribute 'float4_e2m1fn_x2'), so torchao is disabled for this process and everything that does not use it keeps working. QAT, torchao float8 and torchao-quantized checkpoints need a torchao that matches this torch:
+    pip install "torchao<0.16"
+or a newer torch.
+🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.
+[unsloth_zoo.log|WARNING]Unsloth: Triton 3.9.0 has no block pointers, which torch 2.7.1+cu118's flex attention kernels need, so flex attention cannot compile and runs eagerly with much more memory. Install the Triton your torch pins.
+Unsloth: xformers is installed but cannot load with torch 2.7.1+cu118 (it was built for 2.10.0+cu128), so PyTorch attention is used instead.
+To install a matching xformers, run `unsloth install-kernels xformers`, or `pip uninstall xformers` to hide this. UNSLOTH_ENABLE_LOGGING=1 shows the full error.
+🦥 Unsloth Zoo will now patch everything to make training faster!
+train=7094 val=617 device=cuda dtype=torch.bfloat16
+==((====))==  Unsloth 2026.11.3: Fast Qwen3_5 patching. Transformers: 5.17.0.
+   \\   /|    NVIDIA GeForce RTX 3060. Num GPUs = 1. Max memory: 12.0 GB. Platform: Windows.
+O^O/ \_/ \    Torch: 2.7.1+cu118. CUDA: 8.6. CUDA Toolkit: 11.8. Triton: 3.9.0
+\        /    Bfloat16 = TRUE. FA [Xformers = None. FA2 = False]
+ "-____-"     Free license: http://github.com/unslothai/unsloth
+Unsloth: Fast downloading is enabled - ignore downloading bars which are red colored!
+Unsloth: QLoRA and full finetuning all not selected. Switching to 16bit LoRA.
+
+Loading weights:   0%|          | 0/473 [00:00<?, ?it/s]
+Loading weights:   0%|          | 1/473 [00:00<01:07,  7.04it/s]
+Loading weights:   8%|▊         | 38/473 [00:00<00:02, 183.26it/s]
+Loading weights:  17%|█▋        | 81/473 [00:00<00:01, 284.12it/s]
+Loading weights:  25%|██▌       | 119/473 [00:00<00:01, 318.28it/s]
+Loading weights:  32%|███▏      | 153/473 [00:00<00:00, 322.92it/s]
+Loading weights:  41%|████      | 195/473 [00:00<00:00, 348.16it/s]
+Loading weights:  49%|████▉     | 234/473 [00:00<00:00, 360.74it/s]
+Loading weights:  57%|█████▋    | 271/473 [00:00<00:00, 354.39it/s]
+Loading weights:  66%|██████▌   | 312/473 [00:00<00:00, 369.32it/s]
+Loading weights:  83%|████████▎ | 393/473 [00:01<00:00, 497.88it/s]
+Loading weights:  98%|█████████▊| 463/473 [00:01<00:00, 552.84it/s]
+Loading weights: 100%|██████████| 473/473 [00:01<00:00, 400.16it/s]
+Unsloth: compiling each transformer block as one region (Qwen3_5DecoderLayer).
+trainable: backbone(LoRA)=21.6M heads=0.8M
+plan: 1 epochs, 223 steps/epoch, 223 total steps
+Unsloth: Will smartly offload gradients to save VRAM!
+Unsloth: Qwen3_5DecoderLayer block compile failed (backend='inductor' raised:); retrying with flex_attention outside the block.
+Unsloth: Qwen3_5DecoderLayer block compile failed (backend='inductor' raised:); keeping the stock forward for this layer.
+[unsloth_zoo.log|WARNING]Unsloth: torch.compile could not generate code for Qwen3_5RMSNorm_forward; running it eagerly from here. Training is unaffected apart from speed. (BackendCompilerFailed)
+`causal_conv1d_fn` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
+[unsloth_zoo.log|WARNING]Unsloth: torch.compile could not generate code for Qwen3_5RMSNormGated_forward; running it eagerly from here. Training is unaffected apart from speed. (BackendCompilerFailed)
+[unsloth_zoo.log|WARNING]Unsloth: torch.compile could not generate code for apply_rotary_pos_emb; running it eagerly from here. Training is unaffected apart from speed. (BackendCompilerFailed)
+[unsloth_zoo.log|WARNING]Unsloth: torch.compile could not generate code for rotate_half; running it eagerly from here. Training is unaffected apart from speed. (BackendCompilerFailed)
+Unsloth: Double buffering enabled (parallel H2D + compute) for backward pass.
+ep 0 step 4/223 loss 1.4265 280 tok/s ETA 02:33:49 elapsed 00:02:48 lr 1.67e-04
+ep 0 step 8/223 loss 1.2270 396 tok/s ETA 01:20:40 elapsed 00:03:00 lr 2.00e-04
+ep 0 step 12/223 loss 1.1356 533 tok/s ETA 00:57:11 elapsed 00:03:15 lr 2.00e-04
+ep 0 step 16/223 loss 1.1425 610 tok/s ETA 00:44:19 elapsed 00:03:25 lr 1.99e-04
+ep 0 step 20/223 loss 1.0795 746 tok/s ETA 00:38:30 elapsed 00:03:47 lr 1.98e-04
+ep 0 step 24/223 loss 1.0321 818 tok/s ETA 00:33:10 elapsed 00:04:00 lr 1.97e-04
+ep 0 step 28/223 loss 0.8632 914 tok/s ETA 00:29:54 elapsed 00:04:17 lr 1.95e-04
+ep 0 step 32/223 loss 1.0870 981 tok/s ETA 00:27:00 elapsed 00:04:31 lr 1.94e-04
+ep 0 step 36/223 loss 0.9098 1026 tok/s ETA 00:24:28 elapsed 00:04:42 lr 1.92e-04
+ep 0 step 40/223 loss 0.7867 1058 tok/s ETA 00:22:16 elapsed 00:04:52 lr 1.89e-04
+ep 0 step 44/223 loss 0.9620 1101 tok/s ETA 00:20:37 elapsed 00:05:04 lr 1.87e-04
+ep 0 step 48/223 loss 0.7040 1147 tok/s ETA 00:19:19 elapsed 00:05:18 lr 1.84e-04
+== step 50 val nll 0.8035
+ep 0 step 52/223 loss 0.8623 1102 tok/s ETA 00:19:38 elapsed 00:05:58 lr 1.81e-04
+ep 0 step 56/223 loss 1.0760 1152 tok/s ETA 00:18:41 elapsed 00:06:15 lr 1.77e-04
+ep 0 step 60/223 loss 0.9730 1184 tok/s ETA 00:17:35 elapsed 00:06:28 lr 1.74e-04
+ep 0 step 64/223 loss 0.8866 1215 tok/s ETA 00:16:36 elapsed 00:06:41 lr 1.70e-04
+ep 0 step 68/223 loss 0.8729 1244 tok/s ETA 00:15:46 elapsed 00:06:55 lr 1.66e-04
+ep 0 step 72/223 loss 0.8206 1276 tok/s ETA 00:15:17 elapsed 00:07:17 lr 1.62e-04
+ep 0 step 76/223 loss 0.8308 1306 tok/s ETA 00:14:39 elapsed 00:07:34 lr 1.58e-04
+ep 0 step 80/223 loss 0.8476 1336 tok/s ETA 00:14:01 elapsed 00:07:50 lr 1.53e-04
+ep 0 step 84/223 loss 0.7824 1377 tok/s ETA 00:13:46 elapsed 00:08:19 lr 1.48e-04
+ep 0 step 88/223 loss 0.7210 1403 tok/s ETA 00:13:12 elapsed 00:08:36 lr 1.44e-04
+ep 0 step 92/223 loss 0.5860 1430 tok/s ETA 00:12:42 elapsed 00:08:55 lr 1.39e-04
+ep 0 step 96/223 loss 0.5636 1448 tok/s ETA 00:12:09 elapsed 00:09:11 lr 1.34e-04
+ep 0 step 100/223 loss 0.6628 1459 tok/s ETA 00:11:43 elapsed 00:09:32 lr 1.29e-04
+== step 100 val nll 0.7206
+ep 0 step 104/223 loss 0.7407 1414 tok/s ETA 00:11:43 elapsed 00:10:15 lr 1.24e-04
+ep 0 step 108/223 loss 0.7967 1431 tok/s ETA 00:11:17 elapsed 00:10:36 lr 1.18e-04
+ep 0 step 112/223 loss 0.5842 1450 tok/s ETA 00:10:48 elapsed 00:10:54 lr 1.13e-04
+ep 0 step 116/223 loss 0.6447 1467 tok/s ETA 00:10:19 elapsed 00:11:11 lr 1.08e-04
+ep 0 step 120/223 loss 0.4997 1484 tok/s ETA 00:09:52 elapsed 00:11:30 lr 1.03e-04
+ep 0 step 124/223 loss 0.6193 1498 tok/s ETA 00:09:22 elapsed 00:11:44 lr 9.77e-05
+ep 0 step 128/223 loss 0.7501 1519 tok/s ETA 00:09:01 elapsed 00:12:09 lr 9.25e-05
+ep 0 step 132/223 loss 0.6792 1533 tok/s ETA 00:08:35 elapsed 00:12:27 lr 8.74e-05
+ep 0 step 136/223 loss 0.6026 1545 tok/s ETA 00:08:07 elapsed 00:12:42 lr 8.24e-05
+ep 0 step 140/223 loss 0.5336 1550 tok/s ETA 00:07:38 elapsed 00:12:53 lr 7.75e-05
+ep 0 step 144/223 loss 0.6171 1561 tok/s ETA 00:07:12 elapsed 00:13:08 lr 7.27e-05
+ep 0 step 148/223 loss 0.6787 1568 tok/s ETA 00:06:45 elapsed 00:13:19 lr 6.80e-05
+== step 150 val nll 0.6046
+ep 0 step 152/223 loss 0.6136 1527 tok/s ETA 00:06:31 elapsed 00:13:58 lr 6.35e-05
+ep 0 step 156/223 loss 0.4873 1534 tok/s ETA 00:06:05 elapsed 00:14:11 lr 5.91e-05
+ep 0 step 160/223 loss 0.7500 1549 tok/s ETA 00:05:44 elapsed 00:14:34 lr 5.49e-05
+ep 0 step 164/223 loss 0.6938 1557 tok/s ETA 00:05:19 elapsed 00:14:46 lr 5.09e-05
+ep 0 step 168/223 loss 0.5523 1560 tok/s ETA 00:04:55 elapsed 00:15:01 lr 4.71e-05
+ep 0 step 172/223 loss 0.5934 1572 tok/s ETA 00:04:32 elapsed 00:15:19 lr 4.34e-05
+ep 0 step 176/223 loss 0.6135 1583 tok/s ETA 00:04:10 elapsed 00:15:39 lr 4.00e-05
+ep 0 step 180/223 loss 0.4300 1588 tok/s ETA 00:03:48 elapsed 00:15:55 lr 3.69e-05
+ep 0 step 184/223 loss 0.6017 1592 tok/s ETA 00:03:26 elapsed 00:16:15 lr 3.40e-05
+ep 0 step 188/223 loss 0.5756 1597 tok/s ETA 00:03:05 elapsed 00:16:35 lr 3.13e-05
+ep 0 step 192/223 loss 0.4076 1601 tok/s ETA 00:02:43 elapsed 00:16:50 lr 2.89e-05
+ep 0 step 196/223 loss 0.5773 1609 tok/s ETA 00:02:21 elapsed 00:17:07 lr 2.68e-05
+ep 0 step 200/223 loss 0.5826 1615 tok/s ETA 00:02:00 elapsed 00:17:26 lr 2.49e-05
+== step 200 val nll 0.5541
+ep 0 step 204/223 loss 0.5943 1580 tok/s ETA 00:01:41 elapsed 00:18:09 lr 2.34e-05
+ep 0 step 208/223 loss 0.5881 1586 tok/s ETA 00:01:19 elapsed 00:18:23 lr 2.21e-05
+ep 0 step 212/223 loss 0.5097 1594 tok/s ETA 00:00:58 elapsed 00:18:44 lr 2.11e-05
+ep 0 step 216/223 loss 0.6623 1602 tok/s ETA 00:00:37 elapsed 00:19:08 lr 2.05e-05
+ep 0 step 220/223 loss 0.5984 1610 tok/s ETA 00:00:15 elapsed 00:19:28 lr 2.01e-05
+ep 0 step 223/223 loss 0.5670 1614 tok/s ETA 00:00:00 elapsed 00:19:40 lr 2.00e-05
+== step 223 val nll 0.5331
+[val raw] choice  n=325 acc=0.7631 ece=0.0604 nll=0.6821
+[val raw] score   n=39 acc=0.5128 ece=0.1573 nll=1.0816 mae=0.5385
+[val raw] yesno   n=253 acc=0.8854 ece=0.0276 nll=0.2572 auroc=0.9610 acc_best_thr=0.9051
+[val calibrated] choice  n=325 acc=0.7631 ece=0.0578 nll=0.6815
+[val calibrated] score   n=39 acc=0.5128 ece=0.0668 nll=1.0768 mae=0.5385
+[val calibrated] yesno   n=253 acc=0.8854 ece=0.0280 nll=0.2560 auroc=0.9610 acc_best_thr=0.9051
+temperatures: {'choice': 1.046040401026294, 'score': 1.1284951677287807, 'yesno': 1.1054646541016628}
+[val cls:Rowan/hellaswag] choice  n=38 acc=0.6842 ece=0.1581 nll=0.8717
+[val cls:Yelp/yelp_review_full] score   n=39 acc=0.5128 ece=0.0668 nll=1.0768 mae=0.5385
+[val cls:cais/mmlu] choice  n=37 acc=0.6757 ece=0.1337 nll=0.7788
+[val cls:deepset/prompt-injections] yesno   n=49 acc=0.9592 ece=0.0405 nll=0.0578 auroc=1.0000 acc_best_thr=1.0000
+[val cls:fancyzhx/ag_news] choice  n=36 acc=0.9722 ece=0.1255 nll=0.3077
+[val cls:google/boolq] yesno   n=38 acc=0.7895 ece=0.0722 nll=0.4512 auroc=0.8522 acc_best_thr=0.8421
+[val cls:jackhhao/jailbreak-classification] yesno   n=51 acc=1.0000 ece=0.0308 nll=0.0325 auroc=1.0000 acc_best_thr=1.0000
+[val cls:nyu-mll/glue] yesno   n=38 acc=0.8421 ece=0.1439 nll=0.5186 auroc=0.8377 acc_best_thr=0.8684
+[val cls:stanfordnlp/imdb] choice  n=43 acc=0.9070 ece=0.0268 nll=0.2532
+[val cls:ucirvine/sms_spam] yesno   n=38 acc=0.9737 ece=0.0351 nll=0.0422 auroc=1.0000 acc_best_thr=1.0000
+[val jev:MaziyarPanahi/Jev-RAG-Claim-Verification-130K] choice  n=33 acc=0.9394 ece=0.1040 nll=0.2275
+[val jev:MaziyarPanahi/Jev-RAG-Claim-Verification-130K] yesno   n=16 acc=0.6250 ece=0.0894 nll=0.6315 auroc=0.6500 acc_best_thr=0.7500
+[val jev:MaziyarPanahi/Jev-Safety-Refusal-Decisions-150K] choice  n=5 acc=0.8000 ece=0.2922 nll=0.3795
+[val jev:MaziyarPanahi/Jev-Safety-Refusal-Decisions-150K] yesno   n=23 acc=0.7391 ece=0.0951 nll=0.5098 auroc=0.8235 acc_best_thr=0.8261
+[val router:lollms_smart_router_dataset] choice  n=98 acc=0.7653 ece=0.1020 nll=0.8956
+saved -> runs/lollms-jev
+=== Evaluate
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Skipping import of cpp extensions due to incompatible torch version. Please upgrade to torch >= 2.11.0 (found 2.7.1+cu118).
+W1109 11:40:27.658000 20600 venv\Lib\site-packages\torch\distributed\elastic\multiprocessing\redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+Traceback (most recent call last):
+  File "E:\ai\ftstudio\lollms_jev.py", line 1969, in <module>
+    main()
+    ~~~~^^
+  File "E:\ai\ftstudio\lollms_jev.py", line 1965, in main
+    a.fn(a)
+    ~~~~^^^
+  File "E:\ai\ftstudio\lollms_jev.py", line 1418, in cmd_eval
+    model, tok, cfg, temps = load_ckpt(a.ckpt, device)
+                             ~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "E:\ai\ftstudio\lollms_jev.py", line 1115, in load_ckpt
+    model = make_model(cfg["base"], cfg["lora_r"], dtype, False)
+  File "E:\ai\ftstudio\lollms_jev.py", line 889, in make_model
+    bb, hidden = load_backbone(base, dtype)
+                 ~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "E:\ai\ftstudio\lollms_jev.py", line 832, in load_backbone
+    full = AutoModelForCausalLM.from_pretrained(name, torch_dtype=dtype)
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\models\auto\auto_factory.py", line 357, in from_pretrained
+    explicit_local_code = has_local_code and not _get_model_class(
+                                                 ~~~~~~~~~~~~~~~~^
+        config, cls._model_mapping
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ).__module__.startswith("transformers.")
+    ^
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\models\auto\auto_factory.py", line 179, in _get_model_class
+    supported_models = model_mapping[type(config)]
+                       ~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\models\auto\auto_factory.py", line 602, in __getitem__
+    return self._load_attr_from_module(model_type, model_name)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\models\auto\auto_factory.py", line 616, in _load_attr_from_module
+    return getattribute_from_module(self._modules[module_name], attr)
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\models\auto\auto_factory.py", line 528, in getattribute_from_module
+    if hasattr(module, attr):
+       ~~~~~~~^^^^^^^^^^^^^^
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\utils\import_utils.py", line 2560, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\utils\import_utils.py", line 2794, in _get_module
+    raise e
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\utils\import_utils.py", line 2792, in _get_module
+    return importlib.import_module("." + module_name, self.__name__)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python313\Lib\importlib\__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1404, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1369, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1340, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1027, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\models\qwen3_5\modeling_qwen3_5.py", line 38, in <module>
+    from ...modeling_layers import (
+    ...<3 lines>...
+    )
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\modeling_layers.py", line 36, in <module>
+    from .modeling_utils import LoadStateDictConfig, PreTrainedModel, _get_resolved_checkpoint_files
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\modeling_utils.py", line 80, in <module>
+    from .integrations.finegrained_fp8 import ALL_FP8_EXPERTS_FUNCTIONS
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\integrations\finegrained_fp8.py", line 27, in <module>
+    from ..quantizers.quantizers_utils import get_module_from_name, should_convert_module
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\quantizers\__init__.py", line 14, in <module>
+    from .auto import AutoHfQuantizer, AutoQuantizationConfig, register_quantization_config, register_quantizer
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\quantizers\auto.py", line 73, in <module>
+    from .quantizer_torchao import TorchAoHfQuantizer
+  File "E:\ai\ftstudio\venv\Lib\site-packages\transformers\quantizers\quantizer_torchao.py", line 42, in <module>
+    from torchao.prototype.safetensors.safetensors_support import (
+        flatten_tensor_state_dict,
+    )
+  File "E:\ai\ftstudio\venv\Lib\site-packages\torchao\__init__.py", line 107, in <module>
+    from torchao.quantization import (
+        quantize_,
+    )
+  File "E:\ai\ftstudio\venv\Lib\site-packages\torchao\quantization\__init__.py", line 24, in <module>
+    from .quant_api import (
+    ...<17 lines>...
+    )
+  File "E:\ai\ftstudio\venv\Lib\site-packages\torchao\quantization\quant_api.py", line 47, in <module>
+    from torchao.prototype.quantization.quant_api import (
+        Float8StaticActivationFloat8WeightConfig,  # noqa: F401
+    )
+  File "E:\ai\ftstudio\venv\Lib\site-packages\torchao\prototype\quantization\__init__.py", line 2, in <module>
+    from .quant_api import Int8DynamicActivationUIntxWeightConfig, UIntxWeightOnlyConfig
+  File "E:\ai\ftstudio\venv\Lib\site-packages\torchao\prototype\quantization\quant_api.py", line 37, in <module>
+    from torchao.quantization.quantize_.workflows import (
+        QuantizeTensorToFloat8Kwargs,
+    )
+  File "E:\ai\ftstudio\venv\Lib\site-packages\torchao\quantization\quantize_\workflows\__init__.py", line 4, in <module>
+    from .float8.float8_sparse_2x4_1d_data_1d_metadata_tensor import (
+        Float8Sparse2x4_1DData1DMetadataTensor,
+    )
+  File "E:\ai\ftstudio\venv\Lib\site-packages\torchao\quantization\quantize_\workflows\float8\float8_sparse_2x4_1d_data_1d_metadata_tensor.py", line 39, in <module>
+    from .float8_tensor import QuantizeTensorToFloat8Kwargs
+  File "E:\ai\ftstudio\venv\Lib\site-packages\torchao\quantization\quantize_\workflows\float8\float8_tensor.py", line 12, in <module>
+    from torch.nn.functional import ScalingType, scaled_grouped_mm
+ImportError: cannot import name 'ScalingType' from 'torch.nn.functional' (E:\ai\ftstudio\venv\Lib\site-packages\torch\nn\functional.py)

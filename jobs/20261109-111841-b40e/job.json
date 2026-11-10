@@ -1,0 +1,98 @@
+{
+ "id": "20261109-111841-b40e",
+ "cmd": "auto",
+ "title": "auto \u00b7 lollms-jev",
+ "status": "done",
+ "code": 0,
+ "steps": [
+  {
+   "label": "Import MaziyarPanahi/Jev-RAG-Claim-Verification-130K",
+   "argv": [
+    "E:\\ai\\ftstudio\\venv\\Scripts\\python.exe",
+    "-u",
+    "E:\\ai\\ftstudio\\lollms_jev.py",
+    "import-jev",
+    "--db",
+    "lollms-jev.db",
+    "--dataset",
+    "MaziyarPanahi/Jev-RAG-Claim-Verification-130K",
+    "--limit",
+    "500"
+   ],
+   "optional": true,
+   "status": "done",
+   "pct": 100.0,
+   "sub": "",
+   "t0": 1794219521.030337,
+   "t1": 1794219528.622884
+  },
+  {
+   "label": "Import MaziyarPanahi/Jev-Safety-Refusal-Decisions-150K",
+   "argv": [
+    "E:\\ai\\ftstudio\\venv\\Scripts\\python.exe",
+    "-u",
+    "E:\\ai\\ftstudio\\lollms_jev.py",
+    "import-jev",
+    "--db",
+    "lollms-jev.db",
+    "--dataset",
+    "MaziyarPanahi/Jev-Safety-Refusal-Decisions-150K",
+    "--limit",
+    "500"
+   ],
+   "optional": true,
+   "status": "done",
+   "pct": 100.0,
+   "sub": "",
+   "t0": 1794219528.622897,
+   "t1": 1794219536.2900684
+  },
+  {
+   "label": "Train LoLLMS-Jev (+ calibrate)",
+   "argv": [
+    "E:\\ai\\ftstudio\\venv\\Scripts\\python.exe",
+    "-u",
+    "E:\\ai\\ftstudio\\lollms_jev.py",
+    "train",
+    "--db",
+    "lollms-jev.db",
+    "--out",
+    "runs/lollms-jev",
+    "--epochs",
+    "1",
+    "--eval-every",
+    "50",
+    "--base",
+    "Qwen/Qwen3.5-0.8B"
+   ],
+   "optional": false,
+   "status": "done",
+   "pct": 100.0,
+   "sub": "",
+   "t0": 1794219536.2900765,
+   "t1": 1794220818.5089657
+  },
+  {
+   "label": "Evaluate",
+   "argv": [
+    "E:\\ai\\ftstudio\\venv\\Scripts\\python.exe",
+    "-u",
+    "E:\\ai\\ftstudio\\lollms_jev.py",
+    "eval",
+    "--db",
+    "lollms-jev.db",
+    "--ckpt",
+    "runs/lollms-jev"
+   ],
+   "optional": true,
+   "status": "skipped",
+   "pct": null,
+   "sub": "ImportError: cannot import name 'ScalingType' from 'torch.nn.functional' (E:\\ai\\ftstudio\\v",
+   "t0": 1794220818.5089738,
+   "t1": 1794220828.817661
+  }
+ ],
+ "pause_dir": "runs/lollms-jev",
+ "created": 1794219521.0286548,
+ "updated": 1794220828.8178787
+}

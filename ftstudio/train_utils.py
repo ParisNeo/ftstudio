@@ -85,8 +85,9 @@ def queue_evals(ggufs: list[dict], suites: dict, name: str) -> list[str]:
     return [db.create_job("eval", {"gguf": g["path"], "name": f"{name}-{g['quant']}", "suites": suites}) for g in ggufs]
 
 
-def write_train_result(run, cfg, ds, metrics, secs, peak_gb, backend, accelerator, adapter) -> dict:
-    """Same result.json schema for every training engine (the UI chart and export read it)."""
+def write_train_result(run, cfg, ds, metrics, secs, peak_gb, backend, accelerator, adapter, extra: dict | None = None) -> dict:
+    """Same result.json schema for every training engine (the UI chart and export read it).
+    `extra` lets a resumable run record metadata such as resumed_from / epochs_completed."""
     import json
     curve = [[m["step"], m["loss"]] for m in metrics if "loss" in m]
     ev = [[m["step"], m["eval_loss"]] for m in metrics if "eval_loss" in m]
@@ -96,6 +97,8 @@ def write_train_result(run, cfg, ds, metrics, secs, peak_gb, backend, accelerato
            "steps": metrics[-1]["step"] if metrics else 0, "final_loss": curve[-1][1] if curve else None,
            "eval_loss": ev[-1][1] if ev else None, "loss_curve": curve[::step], "eval_curve": ev,
            "minutes": round(secs / 60, 1), "peak_vram_gb": peak_gb}
+    if extra:
+        res.update(extra)
     (Path(run) / "metrics.jsonl").write_text("\n".join(json.dumps(m) for m in metrics))
     (Path(run) / "result.json").write_text(json.dumps(res, indent=2))
     print("done", json.dumps({k: res[k] for k in ("backend", "steps", "final_loss", "eval_loss", "minutes", "peak_vram_gb")}), flush=True)
