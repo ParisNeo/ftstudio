@@ -183,6 +183,10 @@ def prepare(p: dict, out: Path, tok=None, hf_loader=None) -> dict:
         paths[name] = str(f)
 
     probe = template_probe(tok) if tok is not None else None
+    training_ready = bool(
+        probe and not probe.get("error") and not probe.get("anchors_error")
+        and probe.get("instruction_part") and probe.get("response_part")
+    )
     with open(out / "preview.txt", "w", encoding="utf-8") as fh:
         for i, (msgs, n) in enumerate(train[:5]):
             fh.write(f"===== sample {i} ({n} {'tokens' if tok else 'chars'}) =====\n")
@@ -194,7 +198,8 @@ def prepare(p: dict, out: Path, tok=None, hf_loader=None) -> dict:
         "length_unit": "tokens" if tok is not None else "chars",
         "length_stats": _stats([n for _, n in kept]),
         "max_seq_len": max_len, "template_probe": probe,
-        "tokenizer": p.get("tokenizer"), "sha256": h.hexdigest(), "paths": paths,
+        "tokenizer": p.get("tokenizer"), "training_ready": training_ready,
+        "sha256": h.hexdigest(), "paths": paths,
     }
     (out / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
     return report

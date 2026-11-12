@@ -32,7 +32,16 @@ def main(run_dir: str):
     if p.get("tokenizer"):
         rep["tokenizer"] = p["tokenizer"]
     (run / "result.json").write_text(json.dumps(rep, indent=2, ensure_ascii=False))
-    print(json.dumps({k: rep[k] for k in ("read", "kept", "train", "val", "dropped", "formats", "length_stats")}, indent=2))
+    summary = {k: rep[k] for k in ("read", "kept", "train", "val", "dropped", "formats", "length_stats")}
+    summary["training_ready"] = rep.get("training_ready", False)
+    print(json.dumps(summary, indent=2))
+    if not summary["training_ready"]:
+        print(
+            "WARNING: dataset cannot be used for training (missing or incomplete template_probe). "
+            "Re-run this prep job with 'tokenizer' set to the exact model you plan to train "
+            "(e.g. unsloth/Qwen3.5-2B) so response-only masking anchors can be derived.",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

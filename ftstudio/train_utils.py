@@ -42,10 +42,15 @@ def resolve_dataset(ds: dict) -> dict:
 def anchors(report: dict) -> tuple[str, str]:
     pr = report.get("template_probe")
     if not pr:
-        tok = report.get("tokenizer", "none")
+        tok = report.get("tokenizer")
+        if tok:
+            raise ValueError(
+                f"dataset has no template_probe despite being prepared with tokenizer {tok!r}. "
+                "Re-run the prep job to regenerate it."
+            )
         raise ValueError(
-            f"dataset has no template_probe (prepared with tokenizer: {tok}). Re-run the prep job and set the tokenizer "
-            "to the exact model you plan to train (e.g. unsloth/Qwen3.5-2B)."
+            "dataset was prepared without a tokenizer, so it has no template_probe and cannot be trained on. "
+            "Re-run the prep job and set 'tokenizer' to the exact model you plan to train (e.g. unsloth/Qwen3.5-2B)."
         )
     if pr.get("error") or pr.get("anchors_error"):
         err = pr.get("error") or pr.get("anchors_error")
